@@ -1,0 +1,30 @@
+# Steward configuration. Copy to config.toml and fill in the key.
+# Every value can also come from an environment variable (see docs).
+[provider]
+# Any OpenAI-compatible endpoint: DeepSeek, GLM, Qwen, Moonshot, Ollama, vLLM...
+base_url = "https://api.deepseek.com/v1"
+api_key = ""
+model = "deepseek-chat"
+temperature = 0.3
+timeout = 600
+# Ask the endpoint to report token usage in the last stream chunk.
+# Some gateways reject the extra field; leave false if you see a 400.
+stream_usage = false
+
+[agent]
+# Files the tools may touch. Shell commands run here too.
+workspace = "~/.steward/workspace"
+# Where the SQLite database and logs live.
+data_dir = "~/.steward"
+# Hard stop for the tool loop in one turn.
+max_steps = 25
+# Rough token budget for history sent to the model.
+context_budget = 60000
+# Tool output is cut at this many characters before entering history.
+max_tool_output = 20000
+# read-only | workspace-write | full
+permission = "workspace-write"
+# Skip the approval prompt for shell commands.
+auto_approve = false
+# Print the model's reasoning stream (when the provider sends one).
+show_reasoning = false
