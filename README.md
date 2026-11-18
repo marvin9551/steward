@@ -2,6 +2,8 @@
 
 > A small, auditable personal agent you can read end to end.
 
+English | [简体中文](README.zh-CN.md)
+
 Steward is a self-hosted personal assistant: it talks to any OpenAI-compatible
 model, reads and edits files in a workspace you choose, runs shell commands
 with your approval, and keeps every conversation in a local SQLite file.
@@ -118,6 +120,9 @@ steward/
 ```
 
 ## Documentation
+
+English docs live in `docs/`; a full Chinese translation is in
+[README.zh-CN.md](README.zh-CN.md) and [`docs/zh/`](docs/zh/architecture.md).
 
 - [docs/architecture.md](docs/architecture.md) — data flow, message model,
   tool contract, context budgeting, database schema.

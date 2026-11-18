@@ -1,5 +1,7 @@
 # Architecture
 
+English | [简体中文](zh/architecture.md)
+
 This document maps behavior to files. Read it with the source open; the source
 is the specification.
 

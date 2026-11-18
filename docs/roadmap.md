@@ -1,5 +1,7 @@
 # Roadmap
 
+English | [简体中文](zh/roadmap.md)
+
 Each phase ends with something usable. The point is to keep the loop running
 while adding one concept at a time.
 

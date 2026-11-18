@@ -1,5 +1,7 @@
 # Decisions
 
+English | [简体中文](zh/decisions.md)
+
 Short records of choices that shape the project. Each entry states the
 alternatives so a future change can argue with the reasoning rather than the
 code.

@@ -1,5 +1,7 @@
 # Learning notes
 
+English | [简体中文](zh/learning.md)
+
 This project is a teaching artifact as much as a tool. The exercises below are
 ordered so each one breaks a different assumption. Do them on a throwaway
 workspace and a cheap model.
