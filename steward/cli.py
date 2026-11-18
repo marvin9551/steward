@@ -91,6 +91,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("sessions", help="list stored sessions")
 
+    web = sub.add_parser("web", help="serve the local web UI")
+    web.add_argument("--host", default="127.0.0.1", help="bind address (default: 127.0.0.1)")
+    web.add_argument("--port", type=int, default=8765, help="bind port (default: 8765)")
+    web.add_argument("--no-open", action="store_true", help="do not open a browser")
+    web.add_argument("--quiet", action="store_true", help="do not log requests")
+
     history = sub.add_parser("history", help="print one session's messages")
     history.add_argument("session")
     return parser
@@ -109,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_sessions(config)
     if args.command == "history":
         return _cmd_history(config, args.session)
+    if args.command == "web":
+        return _cmd_web(config, args)
 
     if getattr(args, "model", None):
         config.model = args.model
@@ -204,6 +212,36 @@ def _cmd_sessions(config: Config) -> int:
     store = SessionStore(config.db_path)
     _print_sessions(store)
     store.close()
+    return 0
+
+
+def _cmd_web(config: Config, args) -> int:
+    import webbrowser
+
+    from steward.web.server import bind, url_for
+
+    try:
+        server, service = bind(config, args.host, args.port, quiet=args.quiet)
+    except OSError as exc:
+        print(f"cannot start the web server: {exc}", file=sys.stderr)
+        return 1
+
+    url = url_for(server)
+    print(f"steward {__version__}")
+    print(f"  {describe(config)}")
+    print(f"  web {url}    (ctrl-c to stop)\n")
+
+    if not args.no_open:
+        webbrowser.open(url)
+
+    try:
+        server.serve_forever(poll_interval=0.2)
+    except KeyboardInterrupt:
+        print("\nbye")
+    finally:
+        server.stop()
+        server.server_close()
+        service.close()
     return 0
 
 

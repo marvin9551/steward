@@ -115,3 +115,41 @@ can be added to the list explicitly.
 **Why:** the REPL proves the loop, streaming and approval flow with ~100 lines.
 A web UI before the event model is stable would be rework. The roadmap adds an
 SSE endpoint and a single page once the loop stops changing.
+
+**Now:** the loop stopped changing, so P3 added the page — with no change to the
+runner, only two new consumers of `on_event`. See decisions 11 and 12.
+
+## 11. A stdlib HTTP server, not a Python web framework
+
+**Decision:** `http.server.ThreadingHTTPServer` with hand-written routing, JSON
+and SSE. The page is React 18 + Vite + Tailwind + shadcn/ui in `web/`, built
+into `steward/web/static/`.
+
+**Why:** eight endpoints do not need a router, a dependency-injection layer or
+an ASGI server, and skipping FastAPI keeps the install at one package. The
+frontend goes the other way on purpose: shadcn/ui is copied-in source, so the
+components stay readable and editable, and a real component set is worth one
+build step.
+
+**Cost:** we own request parsing, error responses and static serving (~280
+lines), and the page needs Node to rebuild. The built bundle is committed, so
+running it never does.
+
+**Alternatives rejected:** FastAPI + Uvicorn (a second process model and more
+dependencies for a local single-user tool); a terminal-only UI (the `y/N` prompt
+is the worst part of using it).
+
+## 12. One turn at a time, and a cursor instead of a queue
+
+**Decision:** `WebService` holds a single turn slot, and a second
+`POST /api/turn` gets 409. `GET /api/stream` is a cursor over a bounded
+in-memory event log, not a durable queue.
+
+**Why:** one person asking one assistant one question is the real usage, and two
+turns writing into one session produce a history nobody wants to read. A cursor
+over a deque gives replay and resume for free, while the durable log stays in
+SQLite where it already was.
+
+**Cost:** a client that falls further behind than the buffer is told to `resync`
+(reload from SQLite) instead of being caught up event by event. It can therefore
+miss in-flight deltas for the current step; committed history is never lost.

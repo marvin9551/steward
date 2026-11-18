@@ -12,7 +12,7 @@ Steward 是一个自托管的个人助理：连接任意 OpenAI 兼容模型，�
 
 ## 状态
 
-`0.1.0` —— 一个完整的单用户闭环：流式对话、工具调用、持久会话、权限与 CLI。后续规划见 [docs/zh/roadmap.md](docs/zh/roadmap.md)。
+`0.1.0` —— 一个完整的单用户闭环：流式对话、工具调用、持久会话、权限、CLI 与本地网页界面。后续规划见 [docs/zh/roadmap.md](docs/zh/roadmap.md)。
 
 ## 快速开始
 
@@ -26,7 +26,9 @@ cp config.example.toml config.toml
 # 编辑 config.toml：设置 base_url / model 和 key
 # （或者 export STEWARD_API_KEY=...）
 
-steward
+steward web        # 浏览器界面 http://127.0.0.1:8765
+# 或者
+steward            # 同一个循环的终端版本
 ```
 
 首次运行会创建 `~/.steward/`（数据库）和 `~/.steward/workspace/`（文件工具唯一能访问的目录）。可以试试：
@@ -39,6 +41,8 @@ you › 在这个目录建一个 notes.md，写三条今天的待办
 
 ```bash
 steward                          # 开始对话
+steward web                      # 启动网页界面（自动打开浏览器）
+steward web --port 9000 --no-open
 steward chat --new               # 强制新建会话
 steward chat --session <id>      # 恢复会话
 steward sessions                 # 列出已保存会话
@@ -49,6 +53,21 @@ steward --config ./my.toml chat
 ```
 
 对话内命令：`/new`、`/sessions`、`/exit`。
+
+## 网页界面
+
+`steward web` 在 `http://127.0.0.1:8765` 提供单页界面。它和 CLI 用同一个 `Runner`、同一个 SQLite 会话库——你可以在浏览器里看对话，事后用 `steward history` 打印出来。
+
+- 流式文字和工具调用通过 SSE 推送（`GET /api/stream`，带序号，刷新后能接上）。
+- `run_shell` 弹的是审批卡片而不是终端提示：允许一次 / 本次运行始终允许 / 拒绝。
+- 会话列表、权限模式、思考过程开关都在页面上；切换权限在下一次工具调用生效。
+
+构建产物已提交进仓库，所以 `pip install -e .` 之后 `steward web` 即可用。源码在 `web/`（React 18 + Vite + Tailwind + shadcn/ui），重新构建：
+
+```bash
+make web      # cd web && npm ci && npm run build -> steward/web/static
+make web-dev  # Vite 开发服务器 :5173，把 /api 代理到 :8765
+```
 
 ## 配置
 
@@ -82,6 +101,7 @@ Key 除了发往配置的 `base_url` 之外，不会发往任何地方。
 ## 目录结构
 
 ```
+web/                     React 18 + Vite + Tailwind + shadcn/ui（页面源码）
 steward/
   cli.py                 参数、REPL、事件渲染、审批提示
   config.py              TOML + 环境变量覆盖
@@ -89,7 +109,7 @@ steward/
     runner.py            Agent 主循环（建议先读这个文件）
     context.py           按完整 turn 裁剪 + 工具输出压缩
     prompt.py            系统提示词
-    events.py            类型化事件（未来 UI 的渲染契约）
+    events.py            类型化事件（UI 的渲染契约）
   providers/
     openai_compat.py     httpx + 手写 SSE + tool_calls 拼装
   tools/
@@ -98,6 +118,12 @@ steward/
     shell.py             run_shell，环境变量白名单
   policy/permissions.py  allow / ask / deny 权限表
   session/store.py       追加式 SQLite 会话日志
+  web/
+    server.py            http.server 路由、JSON、SSE、静态文件
+    service.py           同时只跑一轮、把消息渲染成 block
+    stream.py            带序号的事件日志
+    approvals.py         允许一次 / 始终允许 / 拒绝
+    static/              构建产物（已提交）
 ```
 
 ## 文档
@@ -116,7 +142,7 @@ steward/
 python3 -m unittest discover -s tests -v
 ```
 
-测试会回放录制的 SSE 分片、覆盖每个工具、并用脚本化的 provider 驱动主循环——不需要网络和 API Key。
+测试会回放录制的 SSE 分片、覆盖每个工具、并用脚本化的 provider 驱动主循环——不需要网络和 API Key。Web 测试覆盖事件日志、审批登记表和 HTTP 接口。
 
 ## 许可证
 

@@ -8,13 +8,17 @@ Two design choices worth noting:
    keeps replay deterministic and makes a future branch/fork feature a matter
    of copying a prefix.
 
-The schema is intentionally boring: one table, JSON payloads, no ORM.
+One connection with an internal lock, rather than a connection per thread: the
+web front end reads (sidebar, transcript) while a turn writes, and SQLite locks
+the file, not the Python object. Serializing here keeps that safe without
+making callers care.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -39,6 +43,7 @@ class SessionStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_DDL)
@@ -48,7 +53,7 @@ class SessionStore:
     # -- writes ---------------------------------------------------------
 
     def append(self, session_id: str, role: str, payload: dict) -> int:
-        with self._conn:
+        with self._lock, self._conn:
             row = self._conn.execute(
                 "SELECT COALESCE(MAX(seq), 0) AS seq FROM messages WHERE session_id = ?",
                 (session_id,),
@@ -65,47 +70,52 @@ class SessionStore:
 
     def messages(self, session_id: str) -> list[dict]:
         """Return the session as OpenAI-style chat messages."""
-        rows = self._conn.execute(
-            "SELECT role, payload FROM messages WHERE session_id = ? ORDER BY seq",
-            (session_id,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT role, payload FROM messages WHERE session_id = ? ORDER BY seq",
+                (session_id,),
+            ).fetchall()
         return [_to_message(row["role"], json.loads(row["payload"])) for row in rows]
 
     def latest_session(self) -> str | None:
-        row = self._conn.execute(
-            "SELECT session_id FROM messages ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT session_id FROM messages ORDER BY id DESC LIMIT 1"
+            ).fetchone()
         return row["session_id"] if row else None
 
     def exists(self, session_id: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM messages WHERE session_id = ? LIMIT 1", (session_id,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM messages WHERE session_id = ? LIMIT 1", (session_id,)
+            ).fetchone()
         return row is not None
 
     def sessions(self, limit: int = 20) -> list[dict]:
-        rows = self._conn.execute(
-            """
-            SELECT session_id,
-                   COUNT(*)              AS messages,
-                   MAX(created_at)       AS updated_at,
-                   (SELECT role FROM messages m2
-                     WHERE m2.session_id = m.session_id
-                     ORDER BY seq DESC LIMIT 1) AS last_role,
-                   (SELECT substr(payload, 1, 120) FROM messages m3
-                     WHERE m3.session_id = m.session_id
-                     ORDER BY seq DESC LIMIT 1) AS last_payload
-            FROM messages m
-            GROUP BY session_id
-            ORDER BY MAX(id) DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT session_id,
+                       COUNT(*)              AS messages,
+                       MAX(created_at)       AS updated_at,
+                       (SELECT role FROM messages m2
+                         WHERE m2.session_id = m.session_id
+                         ORDER BY seq DESC LIMIT 1) AS last_role,
+                       (SELECT substr(payload, 1, 120) FROM messages m3
+                         WHERE m3.session_id = m.session_id
+                         ORDER BY seq DESC LIMIT 1) AS last_payload
+                FROM messages m
+                GROUP BY session_id
+                ORDER BY MAX(id) DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     # -- helpers --------------------------------------------------------
 

@@ -24,7 +24,7 @@ Runner.run_turn
   │         ├─ tools.execute()：超时、错误转文本、截断
   │         └─ store.append(tool, 结果)
   │
-  └─ 发出事件 -> CLI 渲染
+  └─ 发出事件 -> CLI 渲染 / SSE 推送
 ```
 
 对应文件：
@@ -40,6 +40,11 @@ Runner.run_turn
 | 文件 / shell 工具 | `steward/tools/fs.py`、`steward/tools/shell.py` |
 | allow / ask / deny 表 | `steward/policy/permissions.py` |
 | 会话持久化 | `steward/session/store.py` |
+| 路由、JSON、SSE、静态文件 | `steward/web/server.py` |
+| 同时只跑一轮、消息转 block | `steward/web/service.py` |
+| 可回放事件日志 | `steward/web/stream.py` |
+| 审批登记表 | `steward/web/approvals.py` |
+| 页面源码 | `web/` → 构建进 `steward/web/static/` |
 
 ## 消息模型
 
@@ -125,11 +130,48 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 
 路径限制是另一层，且始终生效：`tools/fs.py` 会解析每个路径，拒绝工作目录之外的访问，**所有模式都一样**。`full` 的含义是"不要问我"，不是"任意路径"。
 
+## 网页前端
+
+`steward web` 用标准库的 `ThreadingHTTPServer` 起一个本地服务，提供一个页面和一层很小的 JSON / SSE 接口。它是同一套事件的第二个**渲染器**，不是第二个 agent：
+
+```
+页面（React）── POST /api/turn ──▶ WebService.start_turn
+                                    │  同时只跑一轮
+                                    ▼
+                               Runner.run_turn
+                                    │ on_event
+                                    ▼
+                               EventLog（带序号）
+                                    │
+页面（EventSource）◀─ GET /api/stream ┘
+```
+
+| 接口 | 用途 |
+| --- | --- |
+| `GET /api/status` | 模型、权限、工作区、是否忙碌；绝不含 key |
+| `GET /api/sessions` | 侧边栏会话列表 |
+| `GET /api/sessions/<id>` | 把存下的消息拍平成 UI block |
+| `POST /api/sessions` | 生成一个会话 id |
+| `POST /api/turn` | 开始一轮（正在跑时返回 409） |
+| `GET /api/stream` | SSE；带 `Last-Event-ID` 续传，游标过期则发 `resync` |
+| `POST /api/approval` | 回答审批卡片 |
+| `POST /api/permission` | 切换权限模式，对下一次工具调用生效 |
+
+三个让实现保持很小的决定：
+
+1. **同时只跑一轮。** `WebService` 里的一把锁；第二个请求拿到 409，而不是让两轮对话交叉写入同一个会话。对单用户工具来说这是诚实的，也省掉了全部排队问题。
+2. **用游标，而不是每个事件一个连接。** SSE 处理函数每 120ms 轮询一个有界队列。这点延迟感知不到，却顺带解决了回放、续传和背压。
+3. **存 block，不直接存消息。** `WebService.transcript()` 把 OpenAI 形状的消息拍平成实时流产生的同一种 block，于是历史记录和流式输出共用一套渲染组件。
+
+审批是两个线程唯一必须碰面的地方：turn 线程阻塞在 `ApprovalRegistry.wait()`（通过 `asyncio.to_thread`），HTTP 请求来解除。`always` 按工具名记住，仅在本次进程内有效——重启服务就恢复了终端的谨慎。
+
+页面源码在 `web/`（React 18、Vite、Tailwind、shadcn/ui），构建进 `steward/web/static/`。构建产物已提交，所以 `pip install -e .` 不需要 Node 工具链。
+
 ## 扩展点
 
 - **新增工具** —— 在 `tools/` 写函数并加装饰器，在 `tools/__init__.py` 里 import。不需要改 runner。
 - **新增 provider** —— 实现 `providers/base.py` 里的协议，传给 `Runner(provider=...)`。其余部分与 provider 无关。
-- **新增前端 / 渠道** —— 订阅 `on_event` 即可；CLI 渲染器约 40 行，展示了完整契约。
+- **新增前端 / 渠道** —— 订阅 `on_event` 即可；CLI 渲染器约 40 行，`web/service.py` 约 250 行，两者都展示了完整契约。
 - **记忆 / RAG** —— 在 `Runner.run_turn` 里加一步来丰富系统提示词，再加一个后台任务写摘要。不要塞进 provider 层。
 
 ## 已知故障模式

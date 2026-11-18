@@ -43,6 +43,16 @@
       "justMyCode": true
     },
     {
+      "name": "Steward: web (8765)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "steward",
+      "args": ["web", "--no-open"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
       "name": "Steward: offline demo",
       "type": "debugpy",
       "request": "launch",

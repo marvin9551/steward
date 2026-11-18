@@ -17,6 +17,11 @@ steward = "steward.cli:main"
 [tool.setuptools.packages.find]
 include = ["steward*"]
 
+# The built single page ships inside the package, so `pip install` alone is
+# enough to run `steward web` without a Node toolchain.
+[tool.setuptools.package-data]
+steward = ["web/static/*", "web/static/assets/*"]
+
 [tool.ruff]
 line-length = 110
 target-version = "py311"

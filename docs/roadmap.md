@@ -49,17 +49,21 @@ golden set catches a deliberately broken tool description.
 **Done when:** the assistant remembers a preference across sessions without a
 vector database, and a scheduled job survives a restart.
 
-## P3 — a window into the work
+## P3 — a window into the work (done)
 
-- [ ] **SSE endpoint.** `GET /api/stream` replays events with a cursor, so a
-      dropped connection can resume (the pattern: sequence numbers + replay).
-- [ ] **One-page UI.** Conversation, tool calls, approval buttons, file diff.
-      No framework required; a few hundred lines is enough.
-- [ ] **Approval cards.** Replace the terminal prompt with allow once / always
-      / deny, and record the decision in history.
+- [x] **SSE endpoint.** `GET /api/stream` replays events by sequence number, so
+      a dropped connection resumes instead of restarting the transcript.
+- [x] **One-page UI.** Conversation, tool calls, approval buttons. React 18 +
+      shadcn/ui on a stdlib HTTP server; no second backend.
+- [x] **Approval cards.** Allow once / allow for this process / deny, enforced by
+      the same `policy.decide` table the terminal prompt used.
 
-**Done when:** a browser and a terminal can watch the same turn and both show
-the same tool calls.
+**Done when:** the browser and `steward history` agree about a turn — same
+messages, same tool calls, same results.
+
+Still open in this phase: a file diff view, and cancelling a turn from the page
+(which needs the P1 cancellation work first).
+
 
 ## P4 — boundaries, if you need them
 

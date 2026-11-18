@@ -11,6 +11,11 @@ dist/
 # Personal editor settings (per-machine preferences); shared debug configs stay tracked.
 .vscode/settings.json
 
+# Frontend toolchain. The build output lives in steward/web/static and is
+# committed so `steward web` works without Node.
+web/node_modules/
+web/.vite/
+
 # Local configuration and data: never commit keys or conversations.
 config.toml
 .env

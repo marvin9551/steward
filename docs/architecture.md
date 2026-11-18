@@ -25,7 +25,7 @@ Runner.run_turn
   │         ├─ tools.execute(): timeout, errors as text, truncation
   │         └─ store.append(tool, result)
   │
-  └─ emit events -> CLI renderer
+  └─ emit events -> CLI renderer / SSE stream
 ```
 
 Files:
@@ -41,6 +41,11 @@ Files:
 | File / shell tools | `steward/tools/fs.py`, `steward/tools/shell.py` |
 | Allow/ask/deny table | `steward/policy/permissions.py` |
 | Session persistence | `steward/session/store.py` |
+| Web routes, JSON, SSE, static files | `steward/web/server.py` |
+| One turn at a time, transcript blocks | `steward/web/service.py` |
+| Replayable event log | `steward/web/stream.py` |
+| Approval registry | `steward/web/approvals.py` |
+| The page | `web/` → built into `steward/web/static/` |
 
 ## The message model
 
@@ -144,6 +149,56 @@ Path confinement is separate and always on: `tools/fs.py` resolves every path
 and rejects anything outside `ToolContext.workspace`, in every mode. `full`
 means "don't ask", not "any path".
 
+## The web front end
+
+`steward web` starts a `ThreadingHTTPServer` from the standard library and
+serves one page plus a small JSON/SSE API. It is a second *renderer* of the same
+events, not a second agent:
+
+```
+page (React) ── POST /api/turn ──▶ WebService.start_turn
+                                      │  one turn at a time
+                                      ▼
+                                 Runner.run_turn
+                                      │ on_event
+                                      ▼
+                                 EventLog (seq numbers)
+                                      │
+page (EventSource) ◀─ GET /api/stream ┘
+```
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/status` | model, permission, workspace, busy flag; never the key |
+| `GET /api/sessions` | sidebar list |
+| `GET /api/sessions/<id>` | stored messages flattened into UI blocks |
+| `POST /api/sessions` | mint a session id |
+| `POST /api/turn` | start a turn (409 while one is running) |
+| `GET /api/stream` | SSE; `Last-Event-ID` resumes, a stale cursor gets `resync` |
+| `POST /api/approval` | answer an approval card |
+| `POST /api/permission` | switch mode; applies to the next tool call |
+
+Three choices keep this small:
+
+1. **One turn at a time.** A lock in `WebService`; a second request gets 409
+   instead of two turns interleaving writes into one session. Honest for a
+   single-user tool, and it removes every queueing question.
+2. **A cursor, not a socket per event.** The SSE handler polls a bounded deque
+   every 120 ms. The latency is imperceptible; replay, resume and backpressure
+   stop being problems.
+3. **Blocks, not messages.** `WebService.transcript()` flattens the
+   OpenAI-shaped messages into the same block list the live stream produces, so
+   history and streaming render through one component tree.
+
+Approvals are the only place two threads must meet: the turn thread blocks in
+`ApprovalRegistry.wait()` (via `asyncio.to_thread`) while an HTTP request
+resolves it. "always" is remembered per tool name for the life of the process,
+so restarting the server restores the terminal's caution.
+
+The page is `web/` (React 18, Vite, Tailwind, shadcn/ui). It builds into
+`steward/web/static/`, which is committed so `pip install -e .` needs no Node
+toolchain.
+
 ## Extension points
 
 - **New tool** — write the function in `tools/`, decorate it, import the module
@@ -151,7 +206,7 @@ means "don't ask", not "any path".
 - **New provider** — implement the callable in `providers/base.py`'s protocol
   and pass it to `Runner(provider=...)`. Everything else is provider-agnostic.
 - **New frontend/channel** — subscribe to `on_event`; the CLI renderer is ~40
-  lines and shows the full contract.
+  lines and `web/service.py` is ~250, both show the full contract.
 - **Memory / RAG** — add a step in `Runner.run_turn` that enriches the system
   prompt, and a background job that writes summaries. Do not put it in the
   provider layer.

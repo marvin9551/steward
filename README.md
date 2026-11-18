@@ -21,8 +21,8 @@ what it did.
 ## Status
 
 `0.1.0` — a complete single-user loop: streaming chat, tool calls, persistent
-sessions, permissions, and a CLI. See [docs/roadmap.md](docs/roadmap.md) for
-what comes next.
+sessions, permissions, a CLI and a local web UI. See
+[docs/roadmap.md](docs/roadmap.md) for what comes next.
 
 ## Quick start
 
@@ -36,7 +36,9 @@ cp config.example.toml config.toml
 # edit config.toml: set base_url / model, and the key
 # (or export STEWARD_API_KEY=...)
 
-steward
+steward web        # browser UI on http://127.0.0.1:8765
+# or
+steward            # the same loop in the terminal
 ```
 
 First run creates `~/.steward/` (database) and `~/.steward/workspace/` (the
@@ -50,6 +52,8 @@ you › 在这个目录建一个 notes.md，写三条今天的待办
 
 ```bash
 steward                          # start a conversation
+steward web                      # serve the web UI (opens a browser)
+steward web --port 9000 --no-open
 steward chat --new               # force a new session
 steward chat --session <id>      # resume a session
 steward sessions                 # list saved sessions
@@ -60,6 +64,28 @@ steward --config ./my.toml chat
 ```
 
 In-chat commands: `/new`, `/sessions`, `/exit`.
+
+## Web UI
+
+`steward web` serves one page from `http://127.0.0.1:8765`. It is the same
+`Runner` and the same SQLite sessions as the CLI — you can watch a conversation
+in the browser and print it with `steward history` afterwards.
+
+- Streaming text and tool calls arrive over SSE
+  (`GET /api/stream`, sequence-numbered so a reload resumes cleanly).
+- `run_shell` opens an approval card instead of a terminal prompt: allow once,
+  allow for this process, or deny.
+- Sessions, the permission mode, and the reasoning toggle live in the page;
+  changing the mode takes effect on the next tool call.
+
+The built bundle is committed, so `steward web` works right after
+`pip install -e .`. The source is `web/` (React 18 + Vite + Tailwind +
+shadcn/ui); rebuild with:
+
+```bash
+make web      # cd web && npm ci && npm run build -> steward/web/static
+make web-dev  # Vite dev server on :5173, proxying /api to :8765
+```
 
 ## Configuration
 
@@ -101,6 +127,7 @@ Keys are never sent anywhere except the configured `base_url`.
 ## Layout
 
 ```
+web/                     React 18 + Vite + Tailwind + shadcn/ui (the page)
 steward/
   cli.py                 flags, REPL, event rendering, approval prompt
   config.py              TOML + env overrides
@@ -108,7 +135,7 @@ steward/
     runner.py            the agent loop (the file to read first)
     context.py           turn-based trimming + tool-output shrink
     prompt.py            system prompt
-    events.py            typed events (what a UI would render)
+    events.py            typed events (what a UI renders)
   providers/
     openai_compat.py     httpx + hand-written SSE + tool-call assembly
   tools/
@@ -117,6 +144,12 @@ steward/
     shell.py             run_shell with env allowlist
   policy/permissions.py  allow / ask / deny table
   session/store.py       append-only SQLite conversation log
+  web/
+    server.py            http.server routes, JSON, SSE, static files
+    service.py           one turn at a time, transcript blocks
+    stream.py            sequence-numbered event log
+    approvals.py         allow once / always / deny
+    static/              the built page (committed)
 ```
 
 ## Documentation
@@ -138,7 +171,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 The suite replays recorded SSE chunks, exercises every tool, and drives the
-loop with a scripted provider — no network or API key required.
+loop with a scripted provider — no network or API key required. The web tests
+cover the event log, the approval registry, and the HTTP surface.
 
 ## License
 
