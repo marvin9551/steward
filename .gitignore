@@ -8,6 +8,9 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
+# Personal editor settings (per-machine preferences); shared debug configs stay tracked.
+.vscode/settings.json
+
 # Local configuration and data: never commit keys or conversations.
 config.toml
 .env
