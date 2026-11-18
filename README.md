@@ -10,9 +10,10 @@ with your approval, and keeps every conversation in a local SQLite file.
 
 It is also a **reference implementation**. The whole harness is about 1,100
 lines of Python (comments and docstrings included) across a handful of files,
-with exactly one runtime dependency (`httpx`). Nothing is hidden behind a
-framework, so every decision — how tool calls stream in, how history is
-trimmed, when a command needs approval — is visible and changeable.
+with exactly one runtime dependency (`httpx`); the optional web UI adds FastAPI
+and uvicorn. Nothing is hidden behind a framework, so every decision — how tool
+calls stream in, how history is trimmed, when a command needs approval — is
+visible and changeable.
 
 The name is deliberate: a steward manages someone else's affairs. It is trusted
 with access, expected to stay inside its remit, and should be able to explain
@@ -30,7 +31,7 @@ Requires Python 3.11+.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[web]"      # drop [web] for a terminal-only install
 
 cp config.example.toml config.toml
 # edit config.toml: set base_url / model, and the key
@@ -71,6 +72,8 @@ In-chat commands: `/new`, `/sessions`, `/exit`.
 `Runner` and the same SQLite sessions as the CLI — you can watch a conversation
 in the browser and print it with `steward history` afterwards.
 
+- The API is FastAPI + uvicorn, installed by the optional `[web]` extra; the
+  agent loop itself still has one dependency. `/docs` lists every endpoint.
 - Streaming text and tool calls arrive over SSE
   (`GET /api/stream`, sequence-numbered so a reload resumes cleanly).
 - `run_shell` opens an approval card instead of a terminal prompt: allow once,
@@ -78,9 +81,8 @@ in the browser and print it with `steward history` afterwards.
 - Sessions, the permission mode, and the reasoning toggle live in the page;
   changing the mode takes effect on the next tool call.
 
-The built bundle is committed, so `steward web` works right after
-`pip install -e .`. The source is `web/` (React 18 + Vite + Tailwind +
-shadcn/ui); rebuild with:
+The built bundle is committed, so no Node toolchain is needed to run it. The
+source is `web/` (React 18 + Vite + Tailwind + shadcn/ui); rebuild with:
 
 ```bash
 make web      # cd web && npm ci && npm run build -> steward/web/static
@@ -145,7 +147,8 @@ steward/
   policy/permissions.py  allow / ask / deny table
   session/store.py       append-only SQLite conversation log
   web/
-    server.py            http.server routes, JSON, SSE, static files
+    api.py               FastAPI routes, JSON, SSE, static files
+    server.py            uvicorn runner, port selection
     service.py           one turn at a time, transcript blocks
     stream.py            sequence-numbered event log
     approvals.py         allow once / always / deny
@@ -172,7 +175,8 @@ python3 -m unittest discover -s tests -v
 
 The suite replays recorded SSE chunks, exercises every tool, and drives the
 loop with a scripted provider — no network or API key required. The web tests
-cover the event log, the approval registry, and the HTTP surface.
+cover the event log, the approval registry, and the HTTP surface; they skip
+when the `[web]` extra is not installed.
 
 ## License
 

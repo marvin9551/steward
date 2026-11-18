@@ -54,7 +54,7 @@ vector database, and a scheduled job survives a restart.
 - [x] **SSE endpoint.** `GET /api/stream` replays events by sequence number, so
       a dropped connection resumes instead of restarting the transcript.
 - [x] **One-page UI.** Conversation, tool calls, approval buttons. React 18 +
-      shadcn/ui on a stdlib HTTP server; no second backend.
+      shadcn/ui over a FastAPI app; no second backend.
 - [x] **Approval cards.** Allow once / allow for this process / deny, enforced by
       the same `policy.decide` table the terminal prompt used.
 

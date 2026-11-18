@@ -119,7 +119,7 @@ SSE endpoint and a single page once the loop stops changing.
 **Now:** the loop stopped changing, so P3 added the page — with no change to the
 runner, only two new consumers of `on_event`. See decisions 11 and 12.
 
-## 11. A stdlib HTTP server, not a Python web framework
+## 11. A stdlib HTTP server, not a Python web framework (superseded by 13)
 
 **Decision:** `http.server.ThreadingHTTPServer` with hand-written routing, JSON
 and SSE. The page is React 18 + Vite + Tailwind + shadcn/ui in `web/`, built
@@ -135,9 +135,8 @@ build step.
 lines), and the page needs Node to rebuild. The built bundle is committed, so
 running it never does.
 
-**Alternatives rejected:** FastAPI + Uvicorn (a second process model and more
-dependencies for a local single-user tool); a terminal-only UI (the `y/N` prompt
-is the worst part of using it).
+**Superseded:** the threading cost turned out to be the wrong trade. See
+decision 13. The frontend half of this decision still stands.
 
 ## 12. One turn at a time, and a cursor instead of a queue
 
@@ -153,3 +152,24 @@ SQLite where it already was.
 **Cost:** a client that falls further behind than the buffer is told to `resync`
 (reload from SQLite) instead of being caught up event by event. It can therefore
 miss in-flight deltas for the current step; committed history is never lost.
+
+## 13. FastAPI for the web layer, as an optional extra
+
+**Decision:** the web API is FastAPI + uvicorn (`steward/web/api.py`,
+`server.py`), installed through `pip install -e ".[web]"`. The agent loop keeps
+its single runtime dependency.
+
+**Why:** the hand-written `http.server` version worked, but it paid for its
+smallness in the wrong currency — a thread per SSE connection, a thread per turn
+running its own event loop, and approvals bridged through `threading.Event`.
+Under ASGI the turn is an `asyncio.Task`, an approval is a future, and SSE is an
+async generator: the same primitives decision 1 already chose for the runtime,
+with no second concurrency model to reason about. Request validation, a
+consistent error shape and `/docs` come with it.
+
+**Cost:** two more packages for anyone who wants the UI, plus a framework's
+conventions. Keeping it an extra means the CLI install is still one dependency,
+and the web tests skip cleanly when it is absent.
+
+**What did not change:** the HTTP contract, the page, `Runner`, and the rule
+that behavior lives in `service.py` while routes stay thin.

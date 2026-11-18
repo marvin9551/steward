@@ -6,7 +6,7 @@
 
 Steward 是一个自托管的个人助理：连接任意 OpenAI 兼容模型，在你指定的工作目录里读写文件，在你批准后执行 shell 命令，并把每一轮对话存进本地 SQLite。
 
-它同时也是一个**参考实现**。整个 harness 约 1,100 行 Python（含注释与文档字符串），运行时只依赖一个第三方包（`httpx`）。没有任何框架把细节藏起来——工具调用怎么流式拼装、历史怎么裁剪、什么命令需要审批——每一处都可见、可改。
+它同时也是一个**参考实现**。整个 harness 约 1,100 行 Python（含注释与文档字符串），主循环运行时只依赖一个第三方包（`httpx`）；可选的网页界面再加 FastAPI 与 uvicorn。核心细节没有被框架藏起来——工具调用怎么流式拼装、历史怎么裁剪、什么命令需要审批——每一处都可见、可改。
 
 名字是有意的：steward 是替人打理事务的管家。它被授予访问权限，被期望待在自己的职责范围内，并且应当能解释自己做过什么。
 
@@ -20,7 +20,7 @@ Steward 是一个自托管的个人助理：连接任意 OpenAI 兼容模型，�
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[web]"      # 只用终端的话去掉 [web]
 
 cp config.example.toml config.toml
 # 编辑 config.toml：设置 base_url / model 和 key
@@ -58,11 +58,12 @@ steward --config ./my.toml chat
 
 `steward web` 在 `http://127.0.0.1:8765` 提供单页界面。它和 CLI 用同一个 `Runner`、同一个 SQLite 会话库——你可以在浏览器里看对话，事后用 `steward history` 打印出来。
 
+- 接口是 FastAPI + uvicorn，由可选依赖 `[web]` 安装；Agent 主循环本身仍然只有一个依赖。`/docs` 列出全部接口。
 - 流式文字和工具调用通过 SSE 推送（`GET /api/stream`，带序号，刷新后能接上）。
 - `run_shell` 弹的是审批卡片而不是终端提示：允许一次 / 本次运行始终允许 / 拒绝。
 - 会话列表、权限模式、思考过程开关都在页面上；切换权限在下一次工具调用生效。
 
-构建产物已提交进仓库，所以 `pip install -e .` 之后 `steward web` 即可用。源码在 `web/`（React 18 + Vite + Tailwind + shadcn/ui），重新构建：
+构建产物已提交进仓库，运行界面不需要 Node 工具链。源码在 `web/`（React 18 + Vite + Tailwind + shadcn/ui），重新构建：
 
 ```bash
 make web      # cd web && npm ci && npm run build -> steward/web/static
@@ -119,7 +120,8 @@ steward/
   policy/permissions.py  allow / ask / deny 权限表
   session/store.py       追加式 SQLite 会话日志
   web/
-    server.py            http.server 路由、JSON、SSE、静态文件
+    api.py               FastAPI 路由、JSON、SSE、静态文件
+    server.py            uvicorn 启动、端口选择
     service.py           同时只跑一轮、把消息渲染成 block
     stream.py            带序号的事件日志
     approvals.py         允许一次 / 始终允许 / 拒绝
@@ -142,7 +144,7 @@ steward/
 python3 -m unittest discover -s tests -v
 ```
 
-测试会回放录制的 SSE 分片、覆盖每个工具、并用脚本化的 provider 驱动主循环——不需要网络和 API Key。Web 测试覆盖事件日志、审批登记表和 HTTP 接口。
+测试会回放录制的 SSE 分片、覆盖每个工具、并用脚本化的 provider 驱动主循环——不需要网络和 API Key。Web 测试覆盖事件日志、审批登记表和 HTTP 接口；没装 `[web]` 依赖时会自动跳过。
 
 ## 许可证
 

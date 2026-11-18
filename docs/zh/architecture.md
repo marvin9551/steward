@@ -40,7 +40,8 @@ Runner.run_turn
 | 文件 / shell 工具 | `steward/tools/fs.py`、`steward/tools/shell.py` |
 | allow / ask / deny 表 | `steward/policy/permissions.py` |
 | 会话持久化 | `steward/session/store.py` |
-| 路由、JSON、SSE、静态文件 | `steward/web/server.py` |
+| 路由、JSON、SSE、静态文件 | `steward/web/api.py` |
+| uvicorn 启动、端口选择 | `steward/web/server.py` |
 | 同时只跑一轮、消息转 block | `steward/web/service.py` |
 | 可回放事件日志 | `steward/web/stream.py` |
 | 审批登记表 | `steward/web/approvals.py` |
@@ -132,18 +133,18 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 
 ## 网页前端
 
-`steward web` 用标准库的 `ThreadingHTTPServer` 起一个本地服务，提供一个页面和一层很小的 JSON / SSE 接口。它是同一套事件的第二个**渲染器**，不是第二个 agent：
+`steward web` 用 uvicorn 跑一个 FastAPI 应用（可选依赖 `[web]`），提供一个页面和一层很小的 JSON / SSE 接口。它是同一套事件的第二个**渲染器**，不是第二个 agent：
 
 ```
 页面（React）── POST /api/turn ──▶ WebService.start_turn
-                                    │  同时只跑一轮
+                                    │  asyncio.Task，同时只跑一个
                                     ▼
                                Runner.run_turn
                                     │ on_event
                                     ▼
                                EventLog（带序号）
                                     │
-页面（EventSource）◀─ GET /api/stream ┘
+页面（EventSource）◀─ GET /api/stream ┘（异步生成器）
 ```
 
 | 接口 | 用途 |
@@ -157,15 +158,17 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 | `POST /api/approval` | 回答审批卡片 |
 | `POST /api/permission` | 切换权限模式，对下一次工具调用生效 |
 
+`/docs` 和 `/openapi.json` 是 FastAPI 自带的；请求体是 Pydantic 模型，所有错误统一成 `{"error": "..."}`，也就是页面已经在用的结构。
+
 三个让实现保持很小的决定：
 
-1. **同时只跑一轮。** `WebService` 里的一把锁；第二个请求拿到 409，而不是让两轮对话交叉写入同一个会话。对单用户工具来说这是诚实的，也省掉了全部排队问题。
-2. **用游标，而不是每个事件一个连接。** SSE 处理函数每 120ms 轮询一个有界队列。这点延迟感知不到，却顺带解决了回放、续传和背压。
+1. **同时只跑一轮。** `WebService` 只有一个 task 槽位；第二个请求拿到 409，而不是让两轮对话交叉写入同一个会话。对单用户工具来说这是诚实的，也省掉了全部排队问题。
+2. **用游标，而不是队列。** SSE 生成器每 50ms 用 `asyncio.sleep` 轮询一个有界队列。这点延迟感知不到，却顺带解决了回放、续传和背压，而且每个观看者不再占一个线程。
 3. **存 block，不直接存消息。** `WebService.transcript()` 把 OpenAI 形状的消息拍平成实时流产生的同一种 block，于是历史记录和流式输出共用一套渲染组件。
 
-审批是两个线程唯一必须碰面的地方：turn 线程阻塞在 `ApprovalRegistry.wait()`（通过 `asyncio.to_thread`），HTTP 请求来解除。`always` 按工具名记住，仅在本次进程内有效——重启服务就恢复了终端的谨慎。
+审批就是一个 future：turn 在 `ApprovalRegistry.wait()` 上等待，`POST /api/approval` 来兑现——同一个事件循环，不需要锁。`always` 按工具名记住，仅在本次进程内有效，重启就恢复了终端的谨慎。
 
-页面源码在 `web/`（React 18、Vite、Tailwind、shadcn/ui），构建进 `steward/web/static/`。构建产物已提交，所以 `pip install -e .` 不需要 Node 工具链。
+页面源码在 `web/`（React 18、Vite、Tailwind、shadcn/ui），构建进 `steward/web/static/`。构建产物已提交，所以运行时不需要 Node 工具链。
 
 ## 扩展点
 

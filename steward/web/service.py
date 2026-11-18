@@ -1,24 +1,27 @@
 """The web back end, minus HTTP.
 
-It owns three pieces of shared state:
+Everything here runs on the API's event loop: a turn is an `asyncio.Task`, an
+approval is a future, and the store is shared (it serializes internally). No
+worker threads, no thread-safe queues — which is the main thing FastAPI buys
+over the previous `http.server` version.
 
-- one `SessionStore` (thread-safe internally, so reads and the turn's writes can
-  interleave safely),
+State owned here:
+
+- one `SessionStore`, so the page's reads and the turn's writes agree,
 - an `EventLog` the SSE endpoint tails,
 - an `ApprovalRegistry` the runner awaits,
-- a single turn slot, because one person asking one agent one question at a time
-  is the honest model here; a second concurrent turn would interleave writes
-  into the same session and produce a transcript nobody wants.
+- a single turn slot: one person asking one agent one question at a time. A
+  second concurrent turn would interleave writes into one session and produce a
+  transcript nobody wants, so it gets 409 instead.
 
-HTTP handlers call this; `tests/test_web.py` calls it directly, which is why the
-interesting behavior is testable without opening a socket.
+`tests/test_web.py` drives this directly, which is why the interesting behavior
+is testable without opening a socket.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import threading
 
 from steward import __version__
 from steward.config import PERMISSION_MODES, Config
@@ -51,18 +54,39 @@ class WebService:
         self.approvals = ApprovalRegistry()
         self.store = SessionStore(config.db_path)
         self._provider = provider
-        self._turn = threading.Lock()
+        self._task: asyncio.Task | None = None
         self._busy_session: str | None = None
         self._always_allow: set[str] = set()
 
     # -- lifecycle ------------------------------------------------------
 
-    def close(self) -> None:
+    @property
+    def busy(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    async def close(self) -> None:
         self.approvals.cancel_all()
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown
+                pass
+        self.store.close()
+
+    async def wait_idle(self, timeout: float | None = None) -> bool:
+        """Wait for the running turn. Used by tests and shutdown."""
+        task = self._task
+        if task is None or task.done():
+            return True
         try:
-            self.store.close()
-        except Exception:  # noqa: BLE001 - shutdown must not raise
-            pass
+            await asyncio.wait_for(asyncio.shield(task), timeout)
+        except asyncio.TimeoutError:
+            return False
+        except Exception:  # noqa: BLE001 - the worker already reported it
+            return True
+        return True
 
     # -- reads ----------------------------------------------------------
 
@@ -77,7 +101,7 @@ class WebService:
             "workspace": str(self.config.workspace),
             "show_reasoning": self.config.show_reasoning,
             "has_api_key": bool(self.config.api_key),
-            "busy": self._turn.locked(),
+            "busy": self.busy,
             "busy_session": self._busy_session,
             "latest_session": self.store.latest_session(),
         }
@@ -111,75 +135,59 @@ class WebService:
         self.events.publish({"type": "config", "permission": mode})
         return mode
 
-    def start_turn(self, session_id: str, text: str) -> str:
+    async def start_turn(self, session_id: str, text: str) -> str:
         text = text.strip()
         if not text:
             raise ValueError("message is empty")
-        if not self._turn.acquire(blocking=False):
+        if self.busy:
             raise Busy("a turn is already running; wait for it to finish")
         session_id = session_id or self.new_session()
         self._busy_session = session_id
         self.events.publish({"type": "turn_start", "session": session_id, "text": text})
-        try:
-            worker = threading.Thread(
-                target=self._worker,
-                args=(session_id, text),
-                name=f"steward-turn-{session_id}",
-                daemon=True,
-            )
-            worker.start()
-        except Exception:
-            self._release()
-            raise
+        self._task = asyncio.create_task(
+            self._worker(session_id, text), name=f"steward-turn-{session_id}"
+        )
         return session_id
 
     def resolve_approval(self, approval_id: str, decision: str) -> bool:
         return self.approvals.resolve(approval_id, decision)
 
-    def wait_idle(self, timeout: float | None = None) -> bool:
-        """Block until no turn is running. Used by tests and shutdown."""
-        if self._turn.acquire(timeout=-1 if timeout is None else timeout):
-            self._turn.release()
-            return True
-        return False
-
     # -- turn execution -------------------------------------------------
 
-    def _worker(self, session_id: str, text: str) -> None:
+    async def _worker(self, session_id: str, text: str) -> None:
         try:
-            asyncio.run(self._run_turn(session_id, text))
+            runner = Runner(
+                self.config,
+                self.store,
+                on_event=self._publish,
+                approver=self._approve,
+                provider=self._provider,
+            )
+            await runner.run_turn(session_id, text)
+        except asyncio.CancelledError:
+            self._publish({"type": "notice", "text": "cancelled"})
+            raise
         except ProviderError as exc:
             self._publish({"type": "error", "text": f"provider error: {exc}"})
         except Exception as exc:  # noqa: BLE001 - the page shows what broke
             self._publish({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
         finally:
-            self._release()
-
-    async def _run_turn(self, session_id: str, text: str) -> None:
-        runner = Runner(
-            self.config,
-            self.store,
-            on_event=self._publish,
-            approver=self._approve,
-            provider=self._provider,
-        )
-        await runner.run_turn(session_id, text)
-
-    def _release(self) -> None:
-        self._busy_session = None
-        self._publish({"type": "idle"})
-        if self._turn.locked():
-            self._turn.release()
+            self._busy_session = None
+            self._publish({"type": "idle"})
 
     async def _approve(self, name: str, args: dict) -> bool:
         if name in self._always_allow:
             return True
         approval = self.approvals.create(name, args)
         self._publish({"type": "approval_request", **approval.to_dict()})
-        decision = await asyncio.to_thread(
-            self.approvals.wait, approval.id, APPROVAL_TIMEOUT
+        decision = await self.approvals.wait(approval.id, APPROVAL_TIMEOUT)
+        self._publish(
+            {
+                "type": "approval_resolved",
+                "id": approval.id,
+                "decision": decision or DECISION_DENY,
+            }
         )
-        self._publish({"type": "approval_resolved", "id": approval.id, "decision": decision or DECISION_DENY})
         if decision == DECISION_ALWAYS:
             self._always_allow.add(name)
         return decision in (DECISION_ONCE, DECISION_ALWAYS)

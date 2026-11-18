@@ -38,6 +38,7 @@ cp config.example.toml config.toml   # 然后编辑 base_url / model / api_key
 | **Steward: chat (read-only)** | 同上，加 `--permission read-only` |
 | **Steward: chat (.env)** | 同上，从 `.env` 读取环境变量 |
 | **Steward: sessions** | `python -m steward sessions` |
+| **Steward: web (8765)** | `python -m steward web --no-open` —— FastAPI 网页界面 |
 | **Steward: offline demo** | `scripts/debug_demo.py` —— 脚本化 provider，不联网 |
 | **Steward: unit tests** | `python -m unittest discover -s tests -v` |
 

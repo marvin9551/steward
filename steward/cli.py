@@ -216,32 +216,25 @@ def _cmd_sessions(config: Config) -> int:
 
 
 def _cmd_web(config: Config, args) -> int:
-    import webbrowser
-
-    from steward.web.server import bind, url_for
+    from steward.web.server import WebUnavailable, find_port, serve, url_for
 
     try:
-        server, service = bind(config, args.host, args.port, quiet=args.quiet)
+        port = find_port(args.host, args.port)
     except OSError as exc:
         print(f"cannot start the web server: {exc}", file=sys.stderr)
         return 1
 
-    url = url_for(server)
     print(f"steward {__version__}")
     print(f"  {describe(config)}")
-    print(f"  web {url}    (ctrl-c to stop)\n")
-
-    if not args.no_open:
-        webbrowser.open(url)
+    print(f"  web {url_for(args.host, port)}    (ctrl-c to stop)\n")
 
     try:
-        server.serve_forever(poll_interval=0.2)
+        serve(config, args.host, port, quiet=args.quiet, open_browser=not args.no_open)
+    except WebUnavailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\nbye")
-    finally:
-        server.stop()
-        server.server_close()
-        service.close()
     return 0
 
 

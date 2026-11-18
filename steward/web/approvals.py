@@ -1,26 +1,24 @@
 """Approval cards: the browser equivalent of the CLI's `y/N` prompt.
 
-The runner already accepts an async `approver`, so the only work here is making
-that await something a human can answer in another thread:
+The runner takes an async `approver`, and FastAPI gives us an event loop, so the
+whole handshake is asyncio:
 
-    turn thread          HTTP thread
-    -----------          -----------
-    create()  ────────▶  pending id
-    wait()    (blocked)  ◀──────────── POST /api/approval
-              returns     resolve()
+    turn task                     request handler
+    ---------                     ---------------
+    create()  ── future ──▶       pending id
+    await wait()                  ◀──────────── POST /api/approval
+                                  resolve() sets the future's result
 
-`wait()` blocks, so the service awaits it through `asyncio.to_thread` and the
-turn's event loop keeps streaming other work in the meantime — there is nothing
-else to do while waiting for a human, but blocking a thread is still cheaper
-than blocking the loop.
+No locks and no worker threads: every caller runs on the same loop, which is
+also why a pending approval costs nothing while it waits.
 
-"always" is remembered by tool name for the life of the process. That mirrors
-the CLI: once you have approved `run_shell`, you stop being asked until restart.
+"always" is remembered by tool name for the life of the process, mirroring the
+CLI: once you approve `run_shell` you stop being asked until restart.
 """
 
 from __future__ import annotations
 
-import threading
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -39,8 +37,8 @@ class Approval:
     name: str
     args: dict
     created_at: float
+    future: asyncio.Future
     decision: str = ""
-    answered: threading.Event = field(default_factory=threading.Event)
 
     def to_dict(self) -> dict:
         return {
@@ -51,53 +49,55 @@ class Approval:
         }
 
 
+@dataclass
+class _Pending:
+    items: dict = field(default_factory=dict)
+    counter: int = 0
+
+
 class ApprovalRegistry:
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._pending: dict[str, Approval] = {}
-        self._counter = 0
+        self._pending = _Pending()
 
     def create(self, name: str, args: dict) -> Approval:
-        with self._lock:
-            self._counter += 1
-            approval = Approval(
-                id=f"ap_{self._counter}_{uuid.uuid4().hex[:6]}",
-                name=name,
-                args=dict(args),
-                created_at=time.time(),
-            )
-            self._pending[approval.id] = approval
-            return approval
+        """Must be called from the loop the turn runs on."""
+        self._pending.counter += 1
+        approval = Approval(
+            id=f"ap_{self._pending.counter}_{uuid.uuid4().hex[:6]}",
+            name=name,
+            args=dict(args),
+            created_at=time.time(),
+            future=asyncio.get_running_loop().create_future(),
+        )
+        self._pending.items[approval.id] = approval
+        return approval
 
     def resolve(self, approval_id: str, decision: str) -> bool:
-        """Record a decision. Returns False for an unknown or answered id."""
+        """Record a decision. False for an unknown or already answered id."""
         if decision not in DECISIONS:
             raise ValueError(f"decision must be one of {DECISIONS}, got {decision!r}")
-        with self._lock:
-            approval = self._pending.pop(approval_id, None)
-        if approval is None or approval.answered.is_set():
+        approval = self._pending.items.pop(approval_id, None)
+        if approval is None or approval.future.done():
             return False
         approval.decision = decision
-        approval.answered.set()
+        approval.future.set_result(decision)
         return True
 
-    def wait(self, approval_id: str, timeout: float = DEFAULT_TIMEOUT) -> str:
-        """Block until answered. Empty string means timeout or cancellation."""
-        with self._lock:
-            approval = self._pending.get(approval_id)
+    async def wait(self, approval_id: str, timeout: float = DEFAULT_TIMEOUT) -> str:
+        """Wait for an answer. Empty string means timeout or cancellation."""
+        approval = self._pending.items.get(approval_id)
         if approval is None:
             return ""
-        if not approval.answered.wait(timeout):
+        try:
+            # shield: a timeout must not cancel the future we may still resolve
+            return await asyncio.wait_for(asyncio.shield(approval.future), timeout)
+        except asyncio.TimeoutError:
             self.resolve(approval_id, DECISION_DENY)
             return ""
-        return approval.decision
 
     def pending(self) -> list[dict]:
-        with self._lock:
-            return [item.to_dict() for item in self._pending.values()]
+        return [item.to_dict() for item in self._pending.items.values()]
 
     def cancel_all(self, decision: str = DECISION_DENY) -> None:
-        with self._lock:
-            ids = list(self._pending)
-        for approval_id in ids:
+        for approval_id in list(self._pending.items):
             self.resolve(approval_id, decision)

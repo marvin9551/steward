@@ -41,6 +41,7 @@ Open **Run and Debug** (`⇧⌘D` / `Ctrl+Shift+D`), pick a configuration, press
 | **Steward: chat (read-only)** | same, with `--permission read-only` |
 | **Steward: chat (.env)** | same, loading `.env` |
 | **Steward: sessions** | `python -m steward sessions` |
+| **Steward: web (8765)** | `python -m steward web --no-open` — the FastAPI UI |
 | **Steward: offline demo** | `scripts/debug_demo.py` — scripted provider, no network |
 | **Steward: unit tests** | `python -m unittest discover -s tests -v` |
 
