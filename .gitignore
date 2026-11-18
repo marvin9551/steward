@@ -10,6 +10,7 @@ dist/
 
 # Local configuration and data: never commit keys or conversations.
 config.toml
+.env
 *.db
 *.db-wal
 *.db-shm

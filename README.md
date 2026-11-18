@@ -129,6 +129,7 @@ English docs live in `docs/`; a full Chinese translation is in
 - [docs/decisions.md](docs/decisions.md) — why each piece is the way it is.
 - [docs/roadmap.md](docs/roadmap.md) — phases and what each one teaches.
 - [docs/learning.md](docs/learning.md) — experiments, reading map, evaluation.
+- [docs/vscode.md](docs/vscode.md) — run and debug with breakpoints in VS Code.
 
 ## Tests
 

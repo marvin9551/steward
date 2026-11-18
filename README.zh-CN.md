@@ -106,6 +106,7 @@ steward/
 - [docs/zh/decisions.md](docs/zh/decisions.md) —— 每个设计选择背后的原因。
 - [docs/zh/roadmap.md](docs/zh/roadmap.md) —— 分阶段计划，以及每个阶段要学什么。
 - [docs/zh/learning.md](docs/zh/learning.md) —— 实验、阅读地图、评测方案。
+- [docs/zh/vscode.md](docs/zh/vscode.md) —— 在 VS Code 中启动与断点调试。
 
 （英文原版见 [README.md](README.md) 与 [docs/architecture.md](docs/architecture.md)。）
 
