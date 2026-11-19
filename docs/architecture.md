@@ -143,8 +143,11 @@ message; the failed turn remains visible in `history`.
 | Mode | read tools | write/edit | shell |
 | --- | --- | --- | --- |
 | `read-only` | allow | deny | deny |
-| `workspace-write` | allow | allow | ask |
+| `workspace-write` | allow | ask | ask |
 | `full` | allow | allow | allow |
+
+`ask-before-write` loads as a deprecated alias for `workspace-write` — the
+old fourth mode had the same table.
 
 Path confinement is separate and always on: `tools/fs.py` resolves every path
 and rejects anything outside `ToolContext.workspace`, in every mode. `full`

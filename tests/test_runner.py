@@ -147,6 +147,42 @@ class TestRunnerLoop(RunnerTestCase):
         tool = [m for m in self.store.messages(self.session_id) if m["role"] == "tool"][0]
         self.assertIn("not valid JSON", tool["content"])
 
+    async def test_workspace_write_mode_gates_file_writes(self):
+        self.config.permission = "workspace-write"
+        self.config.auto_approve = False
+        provider = FakeProvider([
+            tool_call("write_file", {"path": "a.txt", "content": "hi"}),
+            ProviderResult(text="done"),
+        ])
+        decisions = []
+
+        async def deny(name, args):
+            decisions.append((name, args))
+            return False
+
+        runner, _ = self.make_runner(provider, approver=deny)
+        await runner.run_turn(self.session_id, "create a.txt")
+
+        self.assertEqual(decisions[0][0], "write_file")
+        self.assertFalse((self.config.workspace / "a.txt").exists())
+        tool = [m for m in self.store.messages(self.session_id) if m["role"] == "tool"][0]
+        self.assertIn("denied", tool["content"])
+
+    async def test_workspace_write_without_approver_blocks_writes(self):
+        self.config.permission = "workspace-write"
+        self.config.auto_approve = False
+        provider = FakeProvider([
+            tool_call("write_file", {"path": "a.txt", "content": "hi"}),
+            ProviderResult(text="done"),
+        ])
+        runner, _ = self.make_runner(provider)
+
+        await runner.run_turn(self.session_id, "create a.txt")
+
+        self.assertFalse((self.config.workspace / "a.txt").exists())
+        tool = [m for m in self.store.messages(self.session_id) if m["role"] == "tool"][0]
+        self.assertIn("approval required", tool["content"])
+
     async def test_step_budget_stops_runaway_tool_calls(self):
         self.config.max_steps = 2
         provider = FakeProvider([

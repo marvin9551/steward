@@ -131,9 +131,17 @@ class TestPermissionTable(unittest.TestCase):
         self.assertEqual(decide("read-only", "write_file"), DENY)
         self.assertEqual(decide("read-only", "run_shell"), DENY)
 
-    def test_workspace_write(self):
-        self.assertEqual(decide("workspace-write", "write_file"), ALLOW)
+    def test_workspace_write_asks_for_every_mutation(self):
+        self.assertEqual(decide("workspace-write", "read_file"), ALLOW)
+        self.assertEqual(decide("workspace-write", "list_dir"), ALLOW)
+        self.assertEqual(decide("workspace-write", "write_file"), ASK)
+        self.assertEqual(decide("workspace-write", "edit_file"), ASK)
         self.assertEqual(decide("workspace-write", "run_shell"), ASK)
+
+    def test_ask_before_write_is_a_deprecated_alias(self):
+        self.assertEqual(decide("ask-before-write", "read_file"), ALLOW)
+        self.assertEqual(decide("ask-before-write", "write_file"), ASK)
+        self.assertEqual(decide("ask-before-write", "run_shell"), ASK)
 
     def test_full(self):
         self.assertEqual(decide("full", "run_shell"), ALLOW)

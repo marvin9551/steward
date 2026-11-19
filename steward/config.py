@@ -71,6 +71,11 @@ class Config:
 
     def prepare(self) -> "Config":
         """Create the data/workspace directories and validate the mode."""
+        # "ask-before-write" is the deprecated spelling of workspace-write:
+        # the old mode had the same decision table, so old settings keep
+        # loading under the merged name.
+        if self.permission == "ask-before-write":
+            self.permission = "workspace-write"
         if self.permission not in PERMISSION_MODES:
             raise ValueError(
                 f"permission must be one of {PERMISSION_MODES}, got {self.permission!r}"

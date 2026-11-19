@@ -76,12 +76,16 @@ fear. A single directory boundary is easy to reason about and easy to explain
 in the system prompt.
 
 **Limitation:** shell commands can still reach outside the workspace. That is
-why shell needs approval in `workspace-write` mode, and why the README says
-this is not a sandbox.
+why every mutation needs approval in `workspace-write` mode, and why the
+README says this is not a sandbox.
 
 ## 7. Approval instead of an OS sandbox (for now)
 
-**Decision:** `run_shell` asks once per call unless `--yes`/`auto_approve`.
+**Decision:** the riskiest operations ask once per call unless
+`--yes`/`auto_approve`. In `workspace-write` that means shell; the
+`ask-before-write` mode (added later, same mechanism) extends the ask to file
+writes and edits, because "the assistant changed the wrong file" deserves the
+same human check as "the assistant ran a command".
 
 **Why:** a personal assistant on a laptop runs commands in the user's own
 account; a real boundary requires bubblewrap (Linux) or Seatbelt (macOS) and a
@@ -190,3 +194,20 @@ and keeps the existing precedence story true: defaults < config.toml < overlay
 where a save lands and locks fields the environment already set. The API key is
 write-only over HTTP — `GET` reports a boolean — so a saved key can never be
 read back out of the page.
+
+## 15. workspace-write asks for writes too
+
+**Decision:** `workspace-write` now asks before every write, edit **and**
+shell call. `ask-before-write` is removed as a separate mode but still loads
+as a deprecated alias for `workspace-write`, because the old mode already had
+exactly this decision table.
+
+**Why:** file tools are bounded by the workspace, but bounded reach is not
+the same as reviewed change — a write inside the workspace can still
+overwrite something the user cares about, and reads-only-are-free keeps the
+mode cheap to run. Three rungs (deny / ask / allow) also explain better than
+four rungs where two of them were identical.
+
+**Cost:** the default mode now interrupts on every write. `--yes` /
+`auto_approve` and the web approval card's "always" decision are the escape
+hatches; the web page's mode dropdown lists three entries instead of four.

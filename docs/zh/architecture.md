@@ -126,8 +126,10 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 | 模式 | 读工具 | 写/编辑 | shell |
 | --- | --- | --- | --- |
 | `read-only` | 允许 | 拒绝 | 拒绝 |
-| `workspace-write` | 允许 | 允许 | 询问 |
+| `workspace-write` | 允许 | 询问 | 询问 |
 | `full` | 允许 | 允许 | 允许 |
+
+`ask-before-write` 作为已废弃的别名仍然可用——旧的第四档和 `workspace-write` 行为一致。
 
 路径限制是另一层，且始终生效：`tools/fs.py` 会解析每个路径，拒绝工作目录之外的访问，**所有模式都一样**。`full` 的含义是"不要问我"，不是"任意路径"。
 

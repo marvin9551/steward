@@ -13,6 +13,13 @@ import time
 
 def build_system_prompt(config) -> str:
     today = time.strftime("%Y-%m-%d")
+    approval_note = (
+        "- This session runs in workspace-write mode: file writes and shell\n"
+        "  commands need the user's approval before they run. Keep changes small\n"
+        "  and few, and do not batch unrelated edits into one call.\n"
+        if config.permission in ("workspace-write", "ask-before-write")
+        else ""
+    )
     return f"""You are Steward, a personal assistant running on the user's own machine.
 
 Environment
@@ -33,7 +40,7 @@ How to work
    same failing call with the same arguments.
 6. When the request is ambiguous or would take a long time, ask one short
    clarifying question instead of guessing.
-
+{approval_note}
 Style
 - Reply in the user's language (Chinese or English, matching their message).
 - Be concise. Use Markdown only when it helps (lists, short code blocks).

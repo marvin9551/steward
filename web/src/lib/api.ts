@@ -1,6 +1,6 @@
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
-export type PermissionMode = 'read-only' | 'workspace-write' | 'full'
+export type PermissionMode = 'read-only' | 'ask-before-write' | 'workspace-write' | 'full'
 
 export interface Status {
   version: string

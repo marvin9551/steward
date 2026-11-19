@@ -196,7 +196,10 @@ class TestWebService(ServiceTestCase):
 
         self.assertNotIn("api_key", status)
         self.assertTrue(status["has_api_key"])
-        self.assertEqual(status["permissions"], ["read-only", "workspace-write", "full"])
+        self.assertEqual(
+            status["permissions"],
+            ["read-only", "workspace-write", "full"],
+        )
         self.assertEqual(status["version"], __version__)
 
     async def test_a_turn_streams_events_and_lands_in_the_transcript(self):
@@ -238,6 +241,10 @@ class TestWebService(ServiceTestCase):
         )
 
         await service.start_turn(self.session_id, "create a.txt")
+        request = await self.wait_for_event("approval_request")
+        self.assertEqual(request["name"], "write_file")
+
+        self.assertTrue(service.resolve_approval(request["id"], "once"))
         self.assertTrue(await service.wait_idle(5))
 
         blocks = service.transcript(self.session_id)["blocks"]
