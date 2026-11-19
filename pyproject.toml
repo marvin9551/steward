@@ -34,3 +34,10 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
 ignore = ["E501"]
+
+# steward/AGENTS.md: every Python file must pass basedpyright strict with
+# zero warnings or errors. See the AGENTS.md at the package root for the
+# full spec (no bare generics, annotated defs, no unused imports).
+[tool.basedpyright]
+typeCheckingMode = "strict"
+include = ["steward", "tests"]
