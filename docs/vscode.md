@@ -170,6 +170,8 @@ complete tool-call cycle in one second.
 | Debugger extremely slow while streaming | a breakpoint in `feed()` is hit per chunk; replace it with a logpoint |
 | Approval prompt never appears | `--yes`/`auto_approve` is on, or the mode is `full` |
 | `.env` config fails immediately | copy `.env.example` to `.env` first |
+| A new endpoint answers `404 no route` or `405 Method Not Allowed` | the running process predates the code: the page is served from disk on every request, so after a `git pull` the UI can be newer than its backend. Restart it (`⇧⌘F5`, or Ctrl-C and `steward web` again) |
+| Provider dialog says the backend lacks `/api/provider` | same as above — restart `steward web`; the dialog locks itself until then |
 | Web config exits with `needs FastAPI` | `pip install -e ".[web]"` with the selected interpreter |
 | Vite page loads but every request fails | the API is not running, or it moved off port 8765 |
 | `127.0.0.1:5173` refuses to connect | use `http://localhost:5173` (Vite binds IPv6 loopback) |

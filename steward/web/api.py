@@ -204,6 +204,17 @@ def create_app(
             return FileResponse(target)
         return _index_response()
 
+    # Without this, an unmatched POST would hit the GET catch-all above and
+    # surface as a confusing "405 Method Not Allowed" — which is exactly what
+    # a page newer than its backend process looks like after a `git pull`.
+    @app.api_route(
+        "/{path:path}",
+        methods=["POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        include_in_schema=False,
+    )
+    async def unknown_method(path: str):
+        raise HTTPException(404, f"no route for /{path}")
+
     return app
 
 

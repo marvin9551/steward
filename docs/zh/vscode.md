@@ -138,6 +138,8 @@ call["function"]["arguments"]
 | 流式时调试器极慢 | `feed()` 里的断点每个分片都会命中，换成日志点 |
 | 从不弹审批 | 开了 `--yes` / `auto_approve`，或权限模式是 `full` |
 | `.env` 配置一启动就失败 | 先把 `.env.example` 复制成 `.env` |
+| 新接口报 `404 no route` 或 `405 Method Not Allowed` | 运行中的进程比代码旧：页面是每次请求从磁盘读的，`git pull` 之后前端可能比后端新。重启进程（⇧⌘F5，或 Ctrl-C 后重新 `steward web`） |
+| Provider 对话框提示后端缺少 `/api/provider` | 同上——重启 `steward web`，在那之前对话框会自我锁定 |
 | web 配置提示缺 FastAPI | 用当前解释器执行 `pip install -e ".[web]"` |
 | Vite 页面能开但接口全失败 | API 没起，或者它没落在 8765 端口 |
 | `127.0.0.1:5173` 连不上 | 改用 `http://localhost:5173`（Vite 绑的是 IPv6 回环） |

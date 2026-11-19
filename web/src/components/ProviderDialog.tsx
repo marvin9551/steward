@@ -102,6 +102,13 @@ export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
           </DialogDescription>
         </DialogHeader>
 
+        {provider === null ? (
+          <p className="rounded-md border border-border border-l-4 border-l-brand bg-brand-soft px-3 py-2 text-[17px] text-foreground">
+            后端还没有 /api/provider——正在运行的 <code className="font-mono text-[16px]">steward web</code>{' '}
+            是旧版本。重启进程（终端 Ctrl-C 后重新执行，VS Code 按 ⇧⌘F5）后再来配置。
+          </p>
+        ) : null}
+
         <div className="grid gap-4">
           <Field label="Base URL" locked={locked('base_url')} hint="OpenAI 兼容端点，通常以 /v1 结尾">
             <Input
@@ -187,11 +194,11 @@ export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={test} disabled={testing}>
+          <Button variant="outline" onClick={test} disabled={testing || !provider}>
             {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
             测试连接
           </Button>
-          <Button onClick={save} disabled={saving}>
+          <Button onClick={save} disabled={saving || !provider}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             保存
           </Button>

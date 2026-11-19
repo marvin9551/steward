@@ -495,6 +495,12 @@ class TestHttpSurface(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertIn("error", response.json())
 
+    def test_unknown_post_route_is_a_404_not_a_405(self):
+        # A stale process serving a newer page produces exactly this request.
+        response = self.client.post("/api/does-not-exist")
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("no route for", response.json()["error"])
+
     def test_spa_fallback_serves_index_for_unknown_paths(self):
         response = self.client.get("/some/deep/link")
         self.assertEqual(response.status_code, 200)

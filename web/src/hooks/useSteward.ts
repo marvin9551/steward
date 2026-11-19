@@ -122,18 +122,31 @@ export function useSteward() {
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      try {
-        const [data, providerSettings] = await Promise.all([api.status(), api.provider()])
-        if (cancelled) return
-        setStatus(data)
-        setProvider(providerSettings)
-        setBusy(data.busy)
-        if (data.latest_session) {
-          await loadTranscript(data.latest_session)
+      // The page is served from disk on every request, so it can be newer than
+      // the process behind it. Fetching these independently keeps a missing
+      // /api/provider from taking down the rest of the page.
+      const [statusResult, providerResult] = await Promise.allSettled([
+        api.status(),
+        api.provider(),
+      ])
+      if (cancelled) return
+
+      if (statusResult.status === 'fulfilled') {
+        setStatus(statusResult.value)
+        setBusy(statusResult.value.busy)
+        if (statusResult.value.latest_session) {
+          await loadTranscript(statusResult.value.latest_session)
         }
-      } catch (error) {
-        if (!cancelled) setNote(`无法连接后端：${describeError(error)}`)
+      } else {
+        setNote(`无法连接后端：${describeError(statusResult.reason)}`)
       }
+
+      if (providerResult.status === 'fulfilled') {
+        setProvider(providerResult.value)
+      } else if (statusResult.status === 'fulfilled') {
+        setNote('后端还没有 /api/provider（进程是旧版本），重启 steward web 后即可配置')
+      }
+
       if (!cancelled) await refreshSessions()
     })()
     return () => {
