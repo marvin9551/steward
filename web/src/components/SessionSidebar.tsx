@@ -1,13 +1,11 @@
 import { MessageSquare, Plus, Settings2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import type { SessionRow, Status } from '@/lib/api'
+import type { SessionRow } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 interface Props {
-  status: Status | null
   sessions: SessionRow[]
   session: string | null
   onNew: () => void
@@ -15,7 +13,7 @@ interface Props {
   onOpenSettings: () => void
 }
 
-export function SessionSidebar({ status, sessions, session, onNew, onSelect, onOpenSettings }: Props) {
+export function SessionSidebar({ sessions, session, onNew, onSelect, onOpenSettings }: Props) {
   return (
     <aside className="flex w-[300px] shrink-0 flex-col gap-4 overflow-hidden bg-surface px-4 py-5">
       <div className="flex items-center gap-2.5 px-1">
@@ -62,23 +60,6 @@ export function SessionSidebar({ status, sessions, session, onNew, onSelect, onO
             </button>
           ))
         )}
-      </div>
-
-      <Separator className="bg-border/70" />
-
-      <div className="space-y-1 break-words px-1 text-[15px] leading-relaxed text-muted-foreground">
-        <p>
-          <span className="font-semibold text-foreground">模型</span> {status?.model ?? '—'}
-        </p>
-        <p>
-          <span className="font-semibold text-foreground">工作区</span> {status?.workspace ?? '—'}
-        </p>
-        <p>
-          <span className="font-semibold text-foreground">服务</span> {status?.base_url ?? '—'}
-        </p>
-        {status && !status.has_api_key ? (
-          <p className="text-brand">未配置 api_key（config.toml 或 STEWARD_API_KEY）</p>
-        ) : null}
       </div>
 
       <Button

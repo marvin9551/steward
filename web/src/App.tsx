@@ -49,7 +49,6 @@ export default function App() {
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-surface text-foreground">
       <SessionSidebar
-        status={steward.status}
         sessions={steward.sessions}
         session={steward.session}
         onNew={steward.newSession}
