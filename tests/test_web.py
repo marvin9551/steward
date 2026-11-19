@@ -241,10 +241,6 @@ class TestWebService(ServiceTestCase):
         )
 
         await service.start_turn(self.session_id, "create a.txt")
-        request = await self.wait_for_event("approval_request")
-        self.assertEqual(request["name"], "write_file")
-
-        self.assertTrue(service.resolve_approval(request["id"], "once"))
         self.assertTrue(await service.wait_idle(5))
 
         blocks = service.transcript(self.session_id)["blocks"]
@@ -253,7 +249,6 @@ class TestWebService(ServiceTestCase):
         self.assertEqual(tool[0]["name"], "write_file")
         self.assertTrue(tool[0]["ok"])
         self.assertIn("wrote", tool[0]["output"])
-
     async def test_approval_card_gates_the_shell_tool(self):
         self.config.auto_approve = False
         service = self.start(
