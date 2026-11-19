@@ -198,7 +198,7 @@ class TestWebService(ServiceTestCase):
         self.assertTrue(status["has_api_key"])
         self.assertEqual(
             status["permissions"],
-            ["read-only", "workspace-write", "full"],
+            ["read-only", "ask-before-write", "workspace-write", "full"],
         )
         self.assertEqual(status["version"], __version__)
 
@@ -298,6 +298,26 @@ class TestWebService(ServiceTestCase):
         self.assertEqual(len(requests), 1)
         outputs = [b["output"] for b in service.transcript(self.session_id)["blocks"] if b["kind"] == "tool"]
         self.assertEqual(outputs, ["one", "two"])
+
+    async def test_ask_before_write_gates_file_tools_with_a_card(self):
+        self.config.auto_approve = False
+        self.config.permission = "ask-before-write"
+        service = self.start(
+            FakeProvider(
+                [
+                    tool_call("write_file", {"path": "a.txt", "content": "hi"}),
+                    ProviderResult(text="done"),
+                ]
+            )
+        )
+
+        await service.start_turn(self.session_id, "create a.txt")
+        request = await self.wait_for_event("approval_request")
+        self.assertEqual(request["name"], "write_file")
+
+        service.resolve_approval(request["id"], "once")
+        self.assertTrue(await service.wait_idle(5))
+        self.assertTrue((self.config.workspace / "a.txt").exists())
 
     async def test_denying_the_approval_blocks_execution(self):
         self.config.auto_approve = False

@@ -195,19 +195,22 @@ where a save lands and locks fields the environment already set. The API key is
 write-only over HTTP — `GET` reports a boolean — so a saved key can never be
 read back out of the page.
 
-## 15. workspace-write asks for writes too
+## 15. ask-before-write: a mode where every mutation asks
 
-**Decision:** `workspace-write` now asks before every write, edit **and**
-shell call. `ask-before-write` is removed as a separate mode but still loads
-as a deprecated alias for `workspace-write`, because the old mode already had
-exactly this decision table.
+**Decision:** a fourth permission mode, `ask-before-write`: reads are free,
+and every write, edit and shell call asks once per call. `workspace-write`
+keeps its original meaning — files free inside the workspace, shell asks.
+(This supersedes the briefly-landed idea of making `workspace-write` ask for
+writes itself: changing what the *default* mode does is a silent behavior
+change for every existing session.)
 
-**Why:** file tools are bounded by the workspace, but bounded reach is not
-the same as reviewed change — a write inside the workspace can still
-overwrite something the user cares about, and reads-only-are-free keeps the
-mode cheap to run. Three rungs (deny / ask / allow) also explain better than
-four rungs where two of them were identical.
+**Why:** the three existing rungs answer three trust levels, but the one
+people actually reach for was missing — "look around freely, but show me
+every change before it happens". Shell-only asking was not enough:
+overwriting a file the user cares about deserves the same glance as running a
+command, and the same approval mechanism already worked for both.
 
-**Cost:** the default mode now interrupts on every write. `--yes` /
-`auto_approve` and the web approval card's "always" decision are the escape
-hatches; the web page's mode dropdown lists three entries instead of four.
+**Cost:** a chatty mode — a long refactor produces many cards. The escape
+hatches are unchanged (`--yes` / `auto_approve`, and the approval card's
+"always" per tool for the process), and the system prompt tells the model to
+keep changes small and unbatched so approvals stay readable.

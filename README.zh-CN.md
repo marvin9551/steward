@@ -91,15 +91,15 @@ make web-dev  # Vite 开发服务器 :5173，把 /api 代理到 :8765
 
 ## 安全模型
 
-三档权限：
+四档权限：
 
 | 模式 | 文件 | Shell |
 | --- | --- | --- |
 | `read-only` | 只读 | 拒绝 |
-| `workspace-write`（默认） | 只读；每次写/编辑**先询问** | 每次调用前询问 |
+| `ask-before-write` | 只读；每次写/编辑**先询问** | 每次调用前询问 |
+| `workspace-write`（默认） | 在**工作目录内**读写 | 每次调用前询问 |
 | `full` | 在工作目录内读写 | 不询问，直接执行 |
 
-`ask-before-write` 作为已废弃的别名仍然可用——它原本就和 `workspace-write` 行为一致。
 
 需要明确的是：**这不是沙箱**。文件工具会解析路径并拒绝工作目录之外的访问，shell 子进程只继承一小份环境变量白名单；但 shell 命令仍然拥有你当前用户的全部权限。如果需要真正的隔离，请把 Steward 放进容器，或使用操作系统级沙箱（bubblewrap / Seatbelt）。详见 [docs/zh/decisions.md](docs/zh/decisions.md)。
 

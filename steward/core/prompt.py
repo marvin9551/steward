@@ -14,7 +14,7 @@ import time
 def build_system_prompt(config) -> str:
     today = time.strftime("%Y-%m-%d")
     approval_note = (
-        "- This session runs in workspace-write mode: file writes and shell\n"
+        "- This session runs in ask-before-write mode: file writes and shell\n"
         "  commands need the user's approval before they run. Keep changes small\n"
         "  and few, and do not batch unrelated edits into one call.\n"
         if config.permission in ("workspace-write", "ask-before-write")
