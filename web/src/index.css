@@ -4,38 +4,40 @@
 
 @layer base {
   :root {
-    /* shadcn/ui tokens, sourced from the shared design system. */
+    /* shadcn/ui tokens, restyled after the Codex desktop app: neutral
+       structure colors, near-black primary buttons, soft shadows instead of
+       visible borders. Functional accents (brand/info/success) stay. */
     --background: 0 0% 100%;
-    --foreground: 212 33% 18%;
+    --foreground: 0 0% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 212 33% 18%;
+    --card-foreground: 0 0% 12%;
     --popover: 0 0% 100%;
-    --popover-foreground: 212 33% 18%;
+    --popover-foreground: 0 0% 12%;
 
-    --primary: 29 100% 50%; /* #ff7a00 */
+    --primary: 0 0% 12%; /* near-black, Codex-style primary */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 208 43% 93%; /* #e6eef5 */
-    --secondary-foreground: 212 33% 18%;
+    --secondary: 0 0% 95%;
+    --secondary-foreground: 0 0% 12%;
 
-    --muted: 208 43% 93%;
-    --muted-foreground: 211 15% 49%; /* #6a7c8f */
+    --muted: 0 0% 95%;
+    --muted-foreground: 0 0% 46%;
 
-    --accent: 212 100% 97%; /* #eef6ff */
-    --accent-foreground: 214 82% 53%;
+    --accent: 0 0% 95%;
+    --accent-foreground: 0 0% 12%;
 
-    --destructive: 29 100% 50%;
+    --destructive: 0 72% 46%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 206 42% 89%; /* #d8e5ef */
-    --input: 206 42% 89%;
-    --ring: 214 82% 53%; /* #2478e9 */
+    --border: 0 0% 91%;
+    --input: 0 0% 91%;
+    --ring: 0 0% 12%;
 
-    --radius: 0.75rem;
+    --radius: 1rem;
 
     /* Extras used by the conversation view. */
-    --surface: 208 43% 93%;
+    --surface: 0 0% 97%;
     --brand: 29 100% 50%;
     --brand-soft: 29 100% 96%;
     --info: 214 82% 53%;

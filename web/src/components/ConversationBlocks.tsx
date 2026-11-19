@@ -20,7 +20,7 @@ export const BlockView = memo(function BlockView({ block, showReasoning, onDecid
   switch (block.kind) {
     case 'user':
       return (
-        <div className="ml-auto max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm border border-border bg-info-soft px-5 py-3 text-[20px] leading-relaxed text-foreground">
+        <div className="ml-auto max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-secondary px-5 py-3 text-[20px] leading-relaxed text-foreground">
           {block.text}
         </div>
       )

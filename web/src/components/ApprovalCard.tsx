@@ -44,10 +44,10 @@ export function ApprovalCard({
           <p className="text-[17px] text-muted-foreground">{LABELS[block.decision ?? '']}</p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="success" onClick={() => onDecide('once')}>
+            <Button size="sm" onClick={() => onDecide('once')}>
               允许一次
             </Button>
-            <Button size="sm" onClick={() => onDecide('always')}>
+            <Button size="sm" variant="secondary" onClick={() => onDecide('always')}>
               始终允许
             </Button>
             <Button size="sm" variant="outline" onClick={() => onDecide('deny')}>

@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 
 import { Composer } from '@/components/Composer'
-import { ProviderDialog } from '@/components/ProviderDialog'
-import { ProviderView } from '@/components/ProviderView'
 import { SessionSidebar } from '@/components/SessionSidebar'
-import { TopBar, type PageTab } from '@/components/TopBar'
+import { SettingsDialog } from '@/components/SettingsDialog'
+import { TopBar } from '@/components/TopBar'
 import { Transcript } from '@/components/Transcript'
 import type { ApprovalDecision } from '@/components/ApprovalCard'
 import { useSteward } from '@/hooks/useSteward'
@@ -14,7 +13,6 @@ export default function App() {
   const steward = useSteward()
   const [draft, setDraft] = useState('')
   const [showReasoning, setShowReasoning] = useState(false)
-  const [tab, setTab] = useState<PageTab>('chat')
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   useEffect(() => {
@@ -56,59 +54,45 @@ export default function App() {
         session={steward.session}
         onNew={steward.newSession}
         onSelect={steward.selectSession}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
       <main className="flex min-w-0 flex-1 flex-col bg-background">
-        <TopBar
-          tab={tab}
-          onTab={setTab}
+        <TopBar status={steward.status} session={steward.session} />
+
+        <Transcript
+          blocks={steward.blocks}
+          showReasoning={showReasoning}
+          busy={steward.busy}
+          onDecide={handleDecide}
+          onPick={pickSuggestion}
+        />
+
+        <Composer
+          value={draft}
+          busy={steward.busy}
+          connected={steward.connected}
+          note={steward.note}
           status={steward.status}
-          session={steward.session}
           showReasoning={showReasoning}
           onToggleReasoning={toggleReasoning}
           onPermission={steward.setPermission}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onChange={setDraft}
+          onSend={handleSend}
         />
-
-        {tab === 'provider' ? (
-          <ProviderView
-            provider={steward.provider}
-            profiles={steward.profiles}
-            note={steward.note}
-            onEdit={() => setSettingsOpen(true)}
-            onApply={steward.applyProfile}
-            onDelete={steward.deleteProfile}
-          />
-        ) : (
-          <>
-            <Transcript
-              blocks={steward.blocks}
-              showReasoning={showReasoning}
-              busy={steward.busy}
-              onDecide={handleDecide}
-              onPick={pickSuggestion}
-            />
-
-            <Composer
-              value={draft}
-              busy={steward.busy}
-              connected={steward.connected}
-              note={steward.note}
-              onChange={setDraft}
-              onSend={handleSend}
-            />
-          </>
-        )}
       </main>
 
-      <ProviderDialog
+      <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         provider={steward.provider}
+        profiles={steward.profiles}
         onSave={steward.saveProvider}
         onTest={steward.testProvider}
         onSyncModels={steward.syncModels}
         onSaveProfile={steward.saveProfile}
+        onApplyProfile={steward.applyProfile}
+        onDeleteProfile={steward.deleteProfile}
         onNote={steward.setNote}
       />
     </div>
