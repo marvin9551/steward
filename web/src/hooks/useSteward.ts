@@ -34,6 +34,7 @@ export function useSteward() {
   const [busy, setBusyState] = useState(false)
   const [connected, setConnected] = useState(false)
   const [note, setNote] = useState('')
+  const [user, setUser] = useState<string | null>(null)
 
   const sessionRef = useRef<string | null>(null)
   const busyRef = useRef(false)
@@ -129,45 +130,59 @@ export function useSteward() {
     [refreshSessions, reloadCurrent, setBusy, setSession],
   )
 
+  const bootstrap = useCallback(async () => {
+    // The page is served from disk on every request, so it can be newer than
+    // the process behind it. Fetching these independently keeps a missing
+    // /api/provider from taking down the rest of the page.
+    const [statusResult, providerResult, profilesResult] = await Promise.allSettled([
+      api.status(),
+      api.provider(),
+      api.profiles(),
+    ])
+
+    if (statusResult.status === 'fulfilled') {
+      setStatus(statusResult.value)
+      setBusy(statusResult.value.busy)
+      if (statusResult.value.latest_session) {
+        await loadTranscript(statusResult.value.latest_session)
+      }
+    } else {
+      setUser(null)
+      setNote(`无法连接后端：${describeError(statusResult.reason)}`)
+      return
+    }
+
+    if (providerResult.status === 'fulfilled') {
+      setProvider(providerResult.value)
+    } else if (statusResult.status === 'fulfilled') {
+      setNote('后端还没有 /api/provider（进程是旧版本），重启 steward web 后即可配置')
+    }
+
+    if (profilesResult.status === 'fulfilled') {
+      setProfiles(profilesResult.value)
+    }
+
+    await refreshSessions()
+  }, [loadTranscript, refreshSessions, setBusy])
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      // The page is served from disk on every request, so it can be newer than
-      // the process behind it. Fetching these independently keeps a missing
-      // /api/provider from taking down the rest of the page.
-      const [statusResult, providerResult, profilesResult] = await Promise.allSettled([
-        api.status(),
-        api.provider(),
-        api.profiles(),
-      ])
-      if (cancelled) return
-
-      if (statusResult.status === 'fulfilled') {
-        setStatus(statusResult.value)
-        setBusy(statusResult.value.busy)
-        if (statusResult.value.latest_session) {
-          await loadTranscript(statusResult.value.latest_session)
-        }
-      } else {
-        setNote(`无法连接后端：${describeError(statusResult.reason)}`)
+      // The session cookie decides whether we are logged in; a 401 simply
+      // means the login page should show.
+      try {
+        const { username } = await api.me()
+        if (!cancelled) setUser(username)
+      } catch {
+        if (!cancelled) setUser(null)
+        return
       }
-
-      if (providerResult.status === 'fulfilled') {
-        setProvider(providerResult.value)
-      } else if (statusResult.status === 'fulfilled') {
-        setNote('后端还没有 /api/provider（进程是旧版本），重启 steward web 后即可配置')
-      }
-
-      if (profilesResult.status === 'fulfilled') {
-        setProfiles(profilesResult.value)
-      }
-
-      if (!cancelled) await refreshSessions()
+      if (!cancelled) await bootstrap()
     })()
     return () => {
       cancelled = true
     }
-  }, [loadTranscript, refreshSessions, setBusy])
+  }, [bootstrap])
 
   useEffect(() => {
     const source = new EventSource('/api/stream')
@@ -257,6 +272,20 @@ export function useSteward() {
     }
   }, [])
 
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const data = await api.login(username, password)
+      setUser(data.username)
+      setNote('')
+      await bootstrap()
+    },
+    [bootstrap],
+  )
+
+  const changePassword = useCallback(async (current: string, next: string) => {
+    await api.changePassword(current, next)
+  }, [])
+
   const saveProvider = useCallback(async (update: ProviderUpdate) => {
     const result = await api.updateProvider(update)
     setProvider(result)
@@ -307,12 +336,15 @@ export function useSteward() {
     busy,
     connected,
     note,
+    user,
     setNote,
     send,
     newSession,
     selectSession,
     decide,
     setPermission,
+    login,
+    changePassword,
     saveProvider,
     testProvider,
     syncModels,

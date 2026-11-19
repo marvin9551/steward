@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { Composer } from '@/components/Composer'
+import { LoginView } from '@/components/LoginView'
 import { SessionSidebar } from '@/components/SessionSidebar'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { TopBar } from '@/components/TopBar'
@@ -48,52 +49,60 @@ export default function App() {
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-surface text-foreground">
-      <SessionSidebar
-        sessions={steward.sessions}
-        session={steward.session}
-        onNew={steward.newSession}
-        onSelect={steward.selectSession}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
+      {steward.user === null ? (
+        <LoginView onLogin={steward.login} />
+      ) : (
+        <>
+          <SessionSidebar
+            sessions={steward.sessions}
+            session={steward.session}
+            onNew={steward.newSession}
+            onSelect={steward.selectSession}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
 
-      <main className="flex min-w-0 flex-1 flex-col bg-background">
-        <TopBar status={steward.status} session={steward.session} />
+          <main className="flex min-w-0 flex-1 flex-col bg-background">
+            <TopBar status={steward.status} session={steward.session} />
 
-        <Transcript
-          blocks={steward.blocks}
-          showReasoning={showReasoning}
-          busy={steward.busy}
-          onDecide={handleDecide}
-          onPick={pickSuggestion}
-        />
+            <Transcript
+              blocks={steward.blocks}
+              showReasoning={showReasoning}
+              busy={steward.busy}
+              onDecide={handleDecide}
+              onPick={pickSuggestion}
+            />
 
-        <Composer
-          value={draft}
-          busy={steward.busy}
-          connected={steward.connected}
-          note={steward.note}
-          status={steward.status}
-          showReasoning={showReasoning}
-          onToggleReasoning={toggleReasoning}
-          onPermission={steward.setPermission}
-          onChange={setDraft}
-          onSend={handleSend}
-        />
-      </main>
+            <Composer
+              value={draft}
+              busy={steward.busy}
+              connected={steward.connected}
+              note={steward.note}
+              status={steward.status}
+              showReasoning={showReasoning}
+              onToggleReasoning={toggleReasoning}
+              onPermission={steward.setPermission}
+              onChange={setDraft}
+              onSend={handleSend}
+            />
+          </main>
 
-      <SettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        provider={steward.provider}
-        profiles={steward.profiles}
-        onSave={steward.saveProvider}
-        onTest={steward.testProvider}
-        onSyncModels={steward.syncModels}
-        onSaveProfile={steward.saveProfile}
-        onApplyProfile={steward.applyProfile}
-        onDeleteProfile={steward.deleteProfile}
-        onNote={steward.setNote}
-      />
+          <SettingsDialog
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            provider={steward.provider}
+            profiles={steward.profiles}
+            user={steward.user}
+            onSave={steward.saveProvider}
+            onTest={steward.testProvider}
+            onSyncModels={steward.syncModels}
+            onSaveProfile={steward.saveProfile}
+            onApplyProfile={steward.applyProfile}
+            onDeleteProfile={steward.deleteProfile}
+            onChangePassword={steward.changePassword}
+            onNote={steward.setNote}
+          />
+        </>
+      )}
     </div>
   )
 }

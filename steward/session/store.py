@@ -37,6 +37,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_messages_session_seq
     ON messages(session_id, seq);
 CREATE INDEX IF NOT EXISTS ix_messages_session
     ON messages(session_id, id);
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT    NOT NULL UNIQUE,
+    password_hash TEXT    NOT NULL,
+    created_at    TEXT    NOT NULL,
+    updated_at    TEXT    NOT NULL
+);
 """
 
 
@@ -119,6 +126,42 @@ class SessionStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    # -- users ----------------------------------------------------------
+
+    def user_count(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+        return int(row["n"])
+
+    def get_user(self, username: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, username, password_hash FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+        return cast(dict[str, Any], dict(row)) if row else None
+
+    def create_user(self, username: str, password_hash: str) -> dict[str, Any]:
+        """Insert one user; the caller owns uniqueness handling."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO users(username, password_hash, created_at, updated_at) "
+                "VALUES (?, ?, datetime('now'), datetime('now'))",
+                (username, password_hash),
+            )
+        user = self.get_user(username)
+        assert user is not None
+        return user
+
+    def update_password(self, username: str, password_hash: str) -> bool:
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE users SET password_hash = ?, updated_at = datetime('now') "
+                "WHERE username = ?",
+                (password_hash, username),
+            )
+        return cursor.rowcount > 0
 
     # -- helpers --------------------------------------------------------
 

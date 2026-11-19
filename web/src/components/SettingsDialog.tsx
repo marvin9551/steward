@@ -45,12 +45,14 @@ interface Props {
   onOpenChange: (open: boolean) => void
   provider: ProviderSettings | null
   profiles: Profiles
+  user: string
   onSave: (update: ProviderUpdate) => Promise<ProviderSettings>
   onTest: () => Promise<ProviderProbe>
   onSyncModels: (base_url?: string, api_key?: string) => Promise<ModelSyncResult>
   onSaveProfile: (name: string, update: ProviderUpdate) => Promise<unknown>
   onApplyProfile: (name: string) => Promise<unknown>
   onDeleteProfile: (name: string) => Promise<unknown>
+  onChangePassword: (current: string, next: string) => Promise<void>
   onNote: (note: string) => void
 }
 
@@ -107,7 +109,7 @@ const PRESETS: Array<{
 
 const EMPTY_PROBE: ProviderProbe = { ok: false, error: '' }
 
-type Section = 'provider' | 'profiles'
+type Section = 'provider' | 'profiles' | 'account'
 
 /**
  * The settings dialog, opened from the sidebar's bottom-left button. Two
@@ -121,12 +123,14 @@ export function SettingsDialog({
   onOpenChange,
   provider,
   profiles,
+  user,
   onSave,
   onTest,
   onSyncModels,
   onSaveProfile,
   onApplyProfile,
   onDeleteProfile,
+  onChangePassword,
   onNote,
 }: Props) {
   const [section, setSection] = useState<Section>('provider')
@@ -268,6 +272,9 @@ export function SettingsDialog({
           </SectionButton>
           <SectionButton active={section === 'profiles'} onClick={() => setSection('profiles')}>
             档案 {profiles.profiles.length > 0 ? profiles.profiles.length : ''}
+          </SectionButton>
+          <SectionButton active={section === 'account'} onClick={() => setSection('account')}>
+            账号
           </SectionButton>
         </div>
 
@@ -440,6 +447,8 @@ export function SettingsDialog({
               </Button>
             </DialogFooter>
           </>
+        ) : section === 'account' ? (
+          <AccountSection user={user} onChange={onChangePassword} onDone={onNote} />
         ) : (
           <div className="grid gap-3">
             {profiles.profiles.length === 0 ? (
@@ -486,6 +495,92 @@ function SectionButton({
     >
       {children}
     </button>
+  )
+}
+
+/** Change the current account's password. The backend re-checks the current
+ * one; new passwords need at least 8 characters. */
+function AccountSection({
+  user,
+  onChange,
+  onDone,
+}: {
+  user: string
+  onChange: (current: string, next: string) => Promise<void>
+  onDone: (note: string) => void
+}) {
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (busy) return
+    if (next !== confirm) {
+      setError('两次输入的新密码不一致')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await onChange(current, next)
+      setCurrent('')
+      setNext('')
+      setConfirm('')
+      onDone('密码已修改')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="grid gap-4" onSubmit={submit}>
+      <p className="text-[17px] text-muted-foreground">
+        当前账号 <span className="font-mono text-foreground">{user}</span>
+      </p>
+
+      <Field label="当前密码">
+        <Input
+          type="password"
+          autoComplete="current-password"
+          value={current}
+          onChange={(event) => setCurrent(event.target.value)}
+        />
+      </Field>
+
+      <Field label="新密码" hint="至少 8 个字符">
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={next}
+          onChange={(event) => setNext(event.target.value)}
+        />
+      </Field>
+
+      <Field label="确认新密码">
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={(event) => setConfirm(event.target.value)}
+        />
+      </Field>
+
+      {error ? (
+        <p className="rounded-md border border-border border-l-4 border-l-brand bg-brand-soft px-3 py-2 text-[17px] text-foreground">
+          {error}
+        </p>
+      ) : null}
+
+      <Button type="submit" disabled={busy || !current || !next || !confirm}>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        修改密码
+      </Button>
+    </form>
   )
 }
 

@@ -220,6 +220,7 @@ def _cmd_sessions(config: Config) -> int:
 
 
 def _cmd_web(config: Config, args: argparse.Namespace) -> int:
+    from steward.web.auth import ensure_default_user
     from steward.web.server import WebUnavailable, find_port, serve, url_for
 
     try:
@@ -230,6 +231,15 @@ def _cmd_web(config: Config, args: argparse.Namespace) -> int:
 
     print(f"steward {__version__}")
     print(f"  {describe(config)}")
+
+    store = SessionStore(config.db_path)
+    created = ensure_default_user(store)
+    store.close()
+    if created is not None:
+        username, password = created
+        print(f"  account {username} / {password}")
+        print("    ↑ 首次启动生成的默认账号，登录后请在「设置」中修改密码")
+
     print(f"  web {url_for(args.host, port)}    (ctrl-c to stop)\n")
 
     try:

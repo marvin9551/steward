@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -50,11 +51,22 @@ from steward.web.approvals import (
     DECISION_ONCE,
     ApprovalRegistry,
 )
+from steward.web.auth import (
+    MIN_PASSWORD_LENGTH,
+    ensure_default_user,
+    hash_password,
+    load_or_create_secret,
+    make_token,
+    verify_password,
+    verify_token,
+)
 from steward.web.stream import EventLog, encode
 
 APPROVAL_TIMEOUT = 900.0
 PROVIDER_FIELDS = ("base_url", "model", "api_key", "temperature", "stream_usage")
 MODELS_TIMEOUT = 15.0
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCK_SECONDS = 30.0
 
 # A probe is the provider seam used by `/api/provider/test`: one chat call.
 ProbeFn = Callable[[Config, list[dict[str, Any]], list[dict[str, Any]]], Awaitable[ProviderResult]]
@@ -128,6 +140,44 @@ class WebService:
         self._task: asyncio.Task[None] | None = None
         self._busy_session: str | None = None
         self._always_allow: set[str] = set()
+        self._secret = load_or_create_secret(config.data_dir)
+        ensure_default_user(self.store)
+        # In-process login throttling: N failures locks the username briefly.
+        self._login_failures: dict[str, tuple[int, float]] = {}
+
+    # -- auth -----------------------------------------------------------
+
+    def verify_session(self, token: str) -> str | None:
+        """Map a session token to its username, or None."""
+        return verify_token(token, self._secret)
+
+    def login(self, username: str, password: str) -> str:
+        """Validate credentials and return a fresh session token.
+
+        Failures are indistinguishable between unknown user and wrong
+        password (no account enumeration), and repeated failures lock the
+        username for a short while.
+        """
+        now = time.monotonic()
+        count, locked_until = self._login_failures.get(username, (0, 0.0))
+        if locked_until > now:
+            raise ValueError("尝试次数过多，请稍后再试")
+        user = self.store.get_user(username)
+        if user is None or not verify_password(password, str(user["password_hash"])):
+            count += 1
+            lock = (count, now + LOGIN_LOCK_SECONDS) if count >= LOGIN_MAX_FAILURES else (count, 0.0)
+            self._login_failures[username] = lock
+            raise ValueError("用户名或密码不正确")
+        self._login_failures.pop(username, None)
+        return make_token(username, self._secret)
+
+    def change_password(self, username: str, current: str, new: str) -> None:
+        user = self.store.get_user(username)
+        if user is None or not verify_password(current, str(user["password_hash"])):
+            raise ValueError("当前密码不正确")
+        if len(new) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"新密码至少需要 {MIN_PASSWORD_LENGTH} 个字符")
+        _ = self.store.update_password(username, hash_password(new))
 
     # -- lifecycle ------------------------------------------------------
 

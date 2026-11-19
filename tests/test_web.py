@@ -818,12 +818,29 @@ class TestHttpSurface(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.config = make_config(Path(self._tmp.name))
         self.provider = FakeProvider([ProviderResult(text="hi")])
+
+        # First start creates the default account; its random password only
+        # exists here, so log in once and let the client keep the cookie.
+        from steward.session.store import SessionStore
+        from steward.web.auth import ensure_default_user
+
+        store = SessionStore(self.config.db_path)
+        created = ensure_default_user(store)
+        assert created is not None
+        self.default_password = created[1]
+        store.close()
+
         self.app = _create_app(self.config, provider=self.provider)
 
         from fastapi.testclient import TestClient
 
         self.client = cast(_ClientLike, TestClient(self.app))
         _ = self.client.__enter__()
+        response = self.client.post(
+            "/api/login",
+            json={"username": "admin", "password": self.default_password},
+        )
+        assert response.status_code == 200
 
     def tearDown(self) -> None:
         self.client.__exit__(None, None, None)

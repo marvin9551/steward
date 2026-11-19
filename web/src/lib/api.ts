@@ -118,12 +118,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       typeof data === 'object' && data && 'error' in data
         ? String((data as { error: unknown }).error)
         : `HTTP ${response.status}`
+    if (response.status === 401) throw new AuthError(message || 'login required')
     throw new Error(message)
   }
   return data as T
 }
 
+/** Raised on HTTP 401; the page treats it as "not logged in yet". */
+export class AuthError extends Error {}
+
 export const api = {
+  login: (username: string, password: string) =>
+    request<{ username: string }>('/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
+
+  me: () => request<{ username: string }>('/api/me'),
+
+  changePassword: (current_password: string, new_password: string) =>
+    request<{ changed: boolean }>('/api/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+
   status: () => request<Status>('/api/status'),
 
   sessions: () => request<{ sessions: SessionRow[] }>('/api/sessions'),
