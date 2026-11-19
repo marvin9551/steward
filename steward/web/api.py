@@ -57,6 +57,14 @@ class PermissionChange(BaseModel):
     mode: str
 
 
+class ProviderUpdate(BaseModel):
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    temperature: float | None = None
+    stream_usage: bool | None = None
+
+
 def get_service(request: Request) -> WebService:
     return request.app.state.service
 
@@ -145,6 +153,23 @@ def create_app(
             return {"permission": service.set_permission(body.mode)}
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
+
+    # -- provider settings ----------------------------------------------
+
+    @app.get("/api/provider")
+    async def get_provider(service: WebService = ServiceDep) -> dict:
+        return service.provider_settings()
+
+    @app.post("/api/provider")
+    async def update_provider(body: ProviderUpdate, service: WebService = ServiceDep) -> dict:
+        try:
+            return service.set_provider(body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.post("/api/provider/test")
+    async def test_provider(service: WebService = ServiceDep) -> dict:
+        return await service.probe_provider()
 
     # -- stream ---------------------------------------------------------
 

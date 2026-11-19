@@ -1,5 +1,7 @@
 # Steward configuration. Copy to config.toml and fill in the key.
 # Every value can also come from an environment variable (see docs).
+# The web UI's settings dialog writes a separate overlay, ~/.steward/settings.toml,
+# instead of touching this file; STEWARD_* environment variables still win.
 [provider]
 # Any OpenAI-compatible endpoint: DeepSeek, GLM, Qwen, Moonshot, Ollama, vLLM...
 base_url = "https://api.deepseek.com/v1"

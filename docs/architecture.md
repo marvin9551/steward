@@ -178,6 +178,9 @@ page (EventSource) ◀─ GET /api/stream ┘  (async generator)
 | `GET /api/stream` | SSE; `Last-Event-ID` resumes, a stale cursor gets `resync` |
 | `POST /api/approval` | answer an approval card |
 | `POST /api/permission` | switch mode; applies to the next tool call |
+| `GET /api/provider` | provider settings; the key is reported as a boolean |
+| `POST /api/provider` | edit settings; empty `api_key` keeps the current one |
+| `POST /api/provider/test` | one tiny real request to verify the saved key |
 
 `/docs` and `/openapi.json` come with FastAPI; request bodies are Pydantic models
 and every error is normalized to `{"error": "..."}`, the shape the page speaks.
@@ -198,6 +201,14 @@ Approvals are a future: the turn awaits `ApprovalRegistry.wait()` while
 `POST /api/approval` resolves it — same loop, no locks. "always" is remembered
 per tool name for the life of the process, so restarting restores the terminal's
 caution.
+
+**Provider settings from the page.** The gear dialog edits `base_url`, model,
+key and temperature. Saves go to `~/.steward/settings.toml` — an overlay
+`config.load()` applies on top of `config.toml` — instead of rewriting your
+commented file. The key is write-only over HTTP: `GET /api/provider` returns
+`api_key_set`, and posting an empty key keeps the current one. Fields set by
+`STEWARD_*` environment variables can never be replaced by a file, so the
+service refuses those edits and the dialog locks the inputs.
 
 The page is `web/` (React 18, Vite, Tailwind, shadcn/ui). It builds into
 `steward/web/static/`, which is committed so the UI needs no Node toolchain at

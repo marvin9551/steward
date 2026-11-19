@@ -61,6 +61,10 @@ export default function App() {
           showReasoning={showReasoning}
           onToggleReasoning={toggleReasoning}
           onPermission={steward.setPermission}
+          provider={steward.provider}
+          onSaveProvider={steward.saveProvider}
+          onTestProvider={steward.testProvider}
+          onNote={steward.setNote}
         />
 
         <Transcript

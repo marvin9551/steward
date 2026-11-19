@@ -24,9 +24,10 @@ import asyncio
 import json
 
 from steward import __version__
-from steward.config import PERMISSION_MODES, Config
+from steward.config import PERMISSION_MODES, Config, save_overlay
 from steward.core.runner import Runner
 from steward.providers.base import Provider, ProviderError
+from steward.providers.openai_compat import stream_chat
 from steward.session.store import SessionStore
 from steward.web.approvals import (
     DECISION_ALWAYS,
@@ -37,6 +38,7 @@ from steward.web.approvals import (
 from steward.web.stream import EventLog, encode
 
 APPROVAL_TIMEOUT = 900.0
+PROVIDER_FIELDS = ("base_url", "model", "api_key", "temperature", "stream_usage")
 
 
 class Busy(RuntimeError):
@@ -48,12 +50,13 @@ class UnknownSession(LookupError):
 
 
 class WebService:
-    def __init__(self, config: Config, provider: Provider | None = None) -> None:
+    def __init__(self, config: Config, provider: Provider | None = None, probe=None) -> None:
         self.config = config
         self.events = EventLog()
         self.approvals = ApprovalRegistry()
         self.store = SessionStore(config.db_path)
         self._provider = provider
+        self._probe = probe or stream_chat
         self._task: asyncio.Task | None = None
         self._busy_session: str | None = None
         self._always_allow: set[str] = set()
@@ -134,6 +137,73 @@ class WebService:
         self.config.permission = mode
         self.events.publish({"type": "config", "permission": mode})
         return mode
+
+    # -- provider settings ----------------------------------------------
+
+    def provider_settings(self) -> dict:
+        """What the settings dialog shows. The key itself never leaves."""
+        return {
+            "base_url": self.config.base_url,
+            "model": self.config.model,
+            "temperature": self.config.temperature,
+            "stream_usage": self.config.stream_usage,
+            "api_key_set": bool(self.config.api_key),
+            # Fields pinned by STEWARD_* env vars; the page cannot win those.
+            "env_overrides": [name for name in self.config.env_overrides if name in PROVIDER_FIELDS],
+        }
+
+    def set_provider(self, updates: dict) -> dict:
+        """Validate, apply, and persist page edits. Empty `api_key` means keep."""
+        clean: dict = {}
+        for name in PROVIDER_FIELDS:
+            if name not in updates or updates[name] is None:
+                continue
+            if name in self.config.env_overrides:
+                raise ValueError(f"{name} is set by STEWARD_* environment and cannot be changed here")
+            value = updates[name]
+            if name == "api_key":
+                if value == "":
+                    continue  # "keep the current key"
+                clean[name] = str(value)
+            elif name == "base_url":
+                text = str(value).strip()
+                if not text.startswith(("http://", "https://")):
+                    raise ValueError("base_url must start with http:// or https://")
+                clean[name] = text.rstrip("/")
+            elif name == "model":
+                text = str(value).strip()
+                if not text:
+                    raise ValueError("model must not be empty")
+                clean[name] = text
+            elif name == "temperature":
+                number = float(value)
+                if not 0.0 <= number <= 2.0:
+                    raise ValueError("temperature must be between 0 and 2")
+                clean[name] = number
+            elif name == "stream_usage":
+                clean[name] = bool(value)
+
+        for name, value in clean.items():
+            setattr(self.config, name, value)
+        if clean:
+            save_overlay(self.config, "provider", clean)
+
+        payload = {"type": "provider", **self.provider_settings()}
+        self.events.publish(payload)
+        return self.provider_settings()
+
+    async def probe_provider(self) -> dict:
+        """One tiny real request, so a saved key is verified, not assumed."""
+        try:
+            result = await self._probe(
+                self.config,
+                [{"role": "user", "content": "Reply with exactly: pong"}],
+                [],
+            )
+            reply = " ".join((result.text or "").split())
+            return {"ok": True, "reply": reply[:80]}
+        except ProviderError as exc:
+            return {"ok": False, "error": str(exc)[:300]}
 
     async def start_turn(self, session_id: str, text: str) -> str:
         text = text.strip()

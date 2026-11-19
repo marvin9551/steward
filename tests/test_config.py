@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from steward.config import load
+from steward.config import Config, load, save_overlay
 from steward.policy.permissions import ALLOW, ASK, DENY, decide
 
 
@@ -14,7 +14,13 @@ class TestConfig(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
-        os.environ.pop("STEWARD_API_KEY", None)
+        for name in (
+            "STEWARD_API_KEY",
+            "STEWARD_MODEL",
+            "STEWARD_DATA_DIR",
+            "STEWARD_WORKSPACE",
+        ):
+            os.environ.pop(name, None)
 
     def test_toml_values_and_env_override(self):
         (self.tmp / "config.toml").write_text(
@@ -55,6 +61,41 @@ permission = "yolo"
         )
         with self.assertRaises(ValueError):
             load(self.tmp / "config.toml")
+
+    def test_page_overlay_applies_and_env_still_wins(self):
+        data = self.tmp / "data"
+        data.mkdir()
+        save_overlay(Config(data_dir=data), "provider", {
+            "model": "overlay-model",
+            "api_key": "overlay-key",
+        })
+        os.environ["STEWARD_DATA_DIR"] = str(data)
+        os.environ["STEWARD_WORKSPACE"] = str(self.tmp / "ws")
+
+        config = load(self.tmp / "missing.toml")
+
+        self.assertEqual(config.model, "overlay-model")
+        self.assertEqual(config.api_key, "overlay-key")
+        self.assertIn("data_dir", config.env_overrides)
+
+        os.environ["STEWARD_MODEL"] = "env-model"
+        config = load(self.tmp / "missing.toml")
+        self.assertEqual(config.model, "env-model")
+        self.assertEqual(config.api_key, "overlay-key")
+
+    def test_save_overlay_merges_and_can_drop_a_key(self):
+        data = self.tmp / "data"
+        data.mkdir()
+        config = Config(data_dir=data)
+        path = save_overlay(config, "provider", {"model": "one", "temperature": 0.9})
+
+        save_overlay(config, "provider", {"model": None, "api_key": "sk-new"})
+        text = path.read_text(encoding="utf-8")
+
+        self.assertNotIn("model =", text)
+        self.assertIn('api_key = "sk-new"', text)
+        self.assertIn("temperature = 0.9", text)
+        self.assertIn("Managed by the steward web UI", text)
 
 
 class TestPermissionTable(unittest.TestCase):

@@ -15,7 +15,7 @@ from steward.core.events import (
     ToolResultEvent,
     TurnDone,
 )
-from steward.providers.base import ProviderResult
+from steward.providers.base import ProviderError, ProviderResult
 from steward.web.approvals import ApprovalRegistry
 from steward.web.service import Busy, UnknownSession, WebService
 from steward.web.stream import EventLog, encode
@@ -173,8 +173,8 @@ class ServiceTestCase(unittest.IsolatedAsyncioTestCase):
             await self.service.close()
         self._tmp.cleanup()
 
-    def start(self, provider) -> WebService:
-        self.service = WebService(self.config, provider=provider)
+    def start(self, provider, probe=None) -> WebService:
+        self.service = WebService(self.config, provider=provider, probe=probe)
         return self.service
 
     async def wait_for_event(self, kind: str, timeout: float = 5.0) -> dict:
@@ -333,6 +333,92 @@ class TestWebService(ServiceTestCase):
             await service.start_turn(self.session_id, "   ")
 
 
+class TestProviderSettings(ServiceTestCase):
+    def overlay_text(self) -> str:
+        path = self.config.data_dir / "settings.toml"
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+    async def test_settings_hide_the_key_and_report_env_locks(self):
+        self.config.api_key = "sk-secret"
+        self.config.env_overrides = ["base_url", "data_dir"]
+        service = self.start(FakeProvider([]))
+
+        settings = service.provider_settings()
+
+        self.assertTrue(settings["api_key_set"])
+        self.assertNotIn("api_key", settings)
+        self.assertEqual(settings["env_overrides"], ["base_url"])
+
+    async def test_set_provider_applies_and_persists_to_the_overlay(self):
+        service = self.start(FakeProvider([]))
+
+        service.set_provider(
+            {
+                "model": "page-model",
+                "base_url": "https://api.test/v1/",
+                "stream_usage": True,
+                "temperature": 0.7,
+                "api_key": "sk-from-page",
+            }
+        )
+
+        self.assertEqual(self.config.model, "page-model")
+        self.assertEqual(self.config.base_url, "https://api.test/v1")
+        self.assertTrue(self.config.stream_usage)
+        text = self.overlay_text()
+        self.assertIn('model = "page-model"', text)
+        self.assertIn('api_key = "sk-from-page"', text)
+        self.assertIn("stream_usage = true", text)
+        published = [e for e in service.events.tail(20) if e.get("type") == "provider"]
+        self.assertEqual(published[0]["model"], "page-model")
+        self.assertNotIn("api_key", published[0])
+
+    async def test_empty_api_key_keeps_the_current_one(self):
+        self.config.api_key = "sk-kept"
+        service = self.start(FakeProvider([]))
+
+        service.set_provider({"api_key": "", "model": "page-model"})
+
+        self.assertEqual(self.config.api_key, "sk-kept")
+        self.assertNotIn("api_key", self.overlay_text())
+
+    async def test_env_locked_fields_are_refused(self):
+        self.config.env_overrides = ["api_key", "model"]
+        service = self.start(FakeProvider([]))
+
+        with self.assertRaises(ValueError):
+            service.set_provider({"api_key": "sk-x"})
+        with self.assertRaises(ValueError):
+            service.set_provider({"model": "nope"})
+
+    async def test_invalid_values_are_rejected(self):
+        service = self.start(FakeProvider([]))
+        for bad in (
+            {"base_url": "ftp://api.test"},
+            {"base_url": "   "},
+            {"model": "   "},
+            {"temperature": 9},
+            {"temperature": "hot"},
+        ):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                service.set_provider(bad)
+
+    async def test_probe_reports_success_and_provider_errors(self):
+        async def good(config, messages, tools, *, on_text=None, on_reasoning=None):
+            return ProviderResult(text="pong")
+
+        async def broken(config, messages, tools, *, on_text=None, on_reasoning=None):
+            raise ProviderError("HTTP 401: bad key")
+
+        healthy = self.start(FakeProvider([]), probe=good)
+        failing = self.start(FakeProvider([]), probe=broken)
+
+        self.assertEqual(await healthy.probe_provider(), {"ok": True, "reply": "pong"})
+        failure = await failing.probe_provider()
+        self.assertFalse(failure["ok"])
+        self.assertIn("401", failure["error"])
+
+
 @unittest.skipUnless(HAS_WEB, "install the [web] extra: pip install -e '.[web]'")
 class TestStreamEvents(ServiceTestCase):
     async def collect(self, service, cursor: int, iterations: int = 1) -> list[str]:
@@ -439,6 +525,32 @@ class TestHttpSurface(unittest.TestCase):
     def test_invalid_permission_is_a_400(self):
         response = self.client.post("/api/permission", json={"mode": "god-mode"})
         self.assertEqual(response.status_code, 400)
+
+    def test_provider_settings_round_trip(self):
+        current = self.client.get("/api/provider").json()
+        self.assertEqual(current["model"], "fake")
+        self.assertNotIn("api_key", current)
+
+        response = self.client.post(
+            "/api/provider", json={"model": "page-model", "api_key": ""}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["model"], "page-model")
+        self.assertEqual(self.config.model, "page-model")
+        overlay = self.config.data_dir / "settings.toml"
+        self.assertIn('model = "page-model"', overlay.read_text(encoding="utf-8"))
+
+    def test_invalid_provider_update_is_a_400(self):
+        response = self.client.post("/api/provider", json={"temperature": 9})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("error", response.json())
+
+    def test_provider_test_reports_a_missing_key_without_network(self):
+        response = self.client.post("/api/provider/test")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertIn("api_key", payload["error"])
 
     def test_permission_change_is_visible_in_status(self):
         self.client.post("/api/permission", json={"mode": "read-only"})

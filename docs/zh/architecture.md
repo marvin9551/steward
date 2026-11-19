@@ -157,6 +157,9 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 | `GET /api/stream` | SSE；带 `Last-Event-ID` 续传，游标过期则发 `resync` |
 | `POST /api/approval` | 回答审批卡片 |
 | `POST /api/permission` | 切换权限模式，对下一次工具调用生效 |
+| `GET /api/provider` | Provider 设置；key 只以布尔值形式返回 |
+| `POST /api/provider` | 修改设置；`api_key` 传空表示保持不变 |
+| `POST /api/provider/test` | 发一次极小的真实请求验证 key |
 
 `/docs` 和 `/openapi.json` 是 FastAPI 自带的；请求体是 Pydantic 模型，所有错误统一成 `{"error": "..."}`，也就是页面已经在用的结构。
 
@@ -167,6 +170,8 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 3. **存 block，不直接存消息。** `WebService.transcript()` 把 OpenAI 形状的消息拍平成实时流产生的同一种 block，于是历史记录和流式输出共用一套渲染组件。
 
 审批就是一个 future：turn 在 `ApprovalRegistry.wait()` 上等待，`POST /api/approval` 来兑现——同一个事件循环，不需要锁。`always` 按工具名记住，仅在本次进程内有效，重启就恢复了终端的谨慎。
+
+**页面上改 Provider 设置。** 齿轮对话框编辑 `base_url`、模型、key 和 temperature。保存写入 `~/.steward/settings.toml`——`config.load()` 会把它叠在 `config.toml` 之上的覆盖文件——而不是重写你带注释的配置文件。key 在 HTTP 上是只写的：`GET /api/provider` 只返回 `api_key_set` 布尔值，POST 空 key 表示保持不变。`STEWARD_*` 环境变量设置的字段永远不可能被文件顶掉，所以服务端拒绝这类修改，对话框里也会把输入框锁住。
 
 页面源码在 `web/`（React 18、Vite、Tailwind、shadcn/ui），构建进 `steward/web/static/`。构建产物已提交，所以运行时不需要 Node 工具链。
 

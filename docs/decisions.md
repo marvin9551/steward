@@ -173,3 +173,20 @@ and the web tests skip cleanly when it is absent.
 
 **What did not change:** the HTTP contract, the page, `Runner`, and the rule
 that behavior lives in `service.py` while routes stay thin.
+
+## 14. The page edits an overlay, never your config.toml
+
+**Decision:** the web settings dialog persists to `~/.steward/settings.toml`,
+which `config.load()` applies on top of `config.toml`. `STEWARD_*` environment
+variables still win, and the service refuses page edits of env-pinned fields.
+
+**Why:** `config.toml` is a file you edit by hand, with comments worth keeping;
+silently rewriting it from a form would be hostile. A separate overlay gives the
+page something it owns, makes "undo everything the page did" a one-file delete,
+and keeps the existing precedence story true: defaults < config.toml < overlay
+< environment.
+
+**Cost:** one more place a value can come from, which is why the dialog says
+where a save lands and locks fields the environment already set. The API key is
+write-only over HTTP — `GET` reports a boolean — so a saved key can never be
+read back out of the page.

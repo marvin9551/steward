@@ -38,7 +38,33 @@ export type StreamEvent =
   | { type: 'approval_request'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'approval_resolved'; id: string; decision: string }
   | { type: 'config'; permission: PermissionMode }
+  | ({ type: 'provider' } & ProviderSettings)
   | { type: 'resync' }
+
+/** What `GET/POST /api/provider` accepts and returns. The key never returns. */
+export interface ProviderSettings {
+  base_url: string
+  model: string
+  temperature: number
+  stream_usage: boolean
+  api_key_set: boolean
+  /** Fields pinned by STEWARD_* environment variables; the page cannot win. */
+  env_overrides: string[]
+}
+
+export interface ProviderUpdate {
+  base_url?: string
+  model?: string
+  api_key?: string
+  temperature?: number
+  stream_usage?: boolean
+}
+
+export interface ProviderProbe {
+  ok: boolean
+  reply?: string
+  error?: string
+}
 
 export interface StoredBlock {
   kind: 'user' | 'assistant' | 'reasoning' | 'notice' | 'error' | 'tool'
@@ -104,4 +130,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ mode }),
     }),
+
+  provider: () => request<ProviderSettings>('/api/provider'),
+
+  updateProvider: (update: ProviderUpdate) =>
+    request<ProviderSettings>('/api/provider', {
+      method: 'POST',
+      body: JSON.stringify(update),
+    }),
+
+  testProvider: () =>
+    request<ProviderProbe>('/api/provider/test', { method: 'POST', body: '{}' }),
 }

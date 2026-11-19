@@ -1,4 +1,12 @@
-"""Configuration: one TOML file plus environment overrides.
+"""Configuration: one TOML file plus a page-managed overlay plus environment.
+
+Precedence, weakest to strongest:
+
+1. defaults
+2. `config.toml` — the file you edit by hand
+3. `<data_dir>/settings.toml` — written by the web UI; the page edits this
+   overlay instead of rewriting your commented file
+4. `STEWARD_*` environment variables — a key can stay out of every file
 
 No pydantic here on purpose. The config is a flat set of values; a dataclass
 with explicit defaults is enough, and reading TOML with tomllib (stdlib) keeps
@@ -7,6 +15,7 @@ the dependency list at exactly one package.
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -14,6 +23,11 @@ from pathlib import Path
 
 PERMISSION_MODES = ("read-only", "workspace-write", "full")
 DEFAULT_CONFIG_FILE = Path("config.toml")
+OVERLAY_FILE = "settings.toml"
+OVERLAY_HEADER = (
+    "# Managed by the steward web UI; safe to delete.\n"
+    "# Applied on top of config.toml. STEWARD_* environment variables still win.\n"
+)
 
 
 def _expand(value: str | Path) -> Path:
@@ -43,6 +57,9 @@ class Config:
     permission: str = "workspace-write"
     auto_approve: bool = False
     show_reasoning: bool = False
+    # Fields the environment set during load(); the web UI refuses to edit
+    # these because a file would never win over them.
+    env_overrides: list[str] = field(default_factory=list)
 
     @property
     def db_path(self) -> Path:
@@ -73,7 +90,7 @@ def _coerce(name: str, value: object, current: object) -> object:
 
 
 def load(path: str | Path | None = None) -> Config:
-    """Load config.toml (if present), then apply STEWARD_* env overrides.
+    """Assemble the config: defaults, config.toml, the UI overlay, then env.
 
     Environment wins so a key can stay out of the repository entirely:
         STEWARD_API_KEY, STEWARD_BASE_URL, STEWARD_MODEL,
@@ -89,8 +106,9 @@ def load(path: str | Path | None = None) -> Config:
 
     for section in ("provider", "agent"):
         for key, value in _as_dict(raw.get(section)).items():
-            if hasattr(cfg, key):
-                setattr(cfg, key, _coerce(key, value, getattr(cfg, key)))
+            if key == "env_overrides" or not hasattr(cfg, key):
+                continue
+            setattr(cfg, key, _coerce(key, value, getattr(cfg, key)))
 
     env_map = {
         "STEWARD_API_KEY": "api_key",
@@ -103,9 +121,69 @@ def load(path: str | Path | None = None) -> Config:
     for env_name, attr in env_map.items():
         value = os.environ.get(env_name)
         if value:
+            cfg.env_overrides.append(attr)
             setattr(cfg, attr, _coerce(attr, value, getattr(cfg, attr)))
 
+    # The page's overlay lives in the data dir and loses to the environment,
+    # so a secret exported as STEWARD_API_KEY can never be silently replaced.
+    # The overlay must not move the directories it is looked up in.
+    overlay = cfg.data_dir / OVERLAY_FILE
+    if overlay.is_file():
+        with overlay.open("rb") as handle:
+            page = tomllib.load(handle)
+        for section in ("provider", "agent"):
+            for key, value in _as_dict(page.get(section)).items():
+                if (
+                    key in ("env_overrides", "data_dir", "workspace")
+                    or key in cfg.env_overrides
+                    or not hasattr(cfg, key)
+                ):
+                    continue
+                setattr(cfg, key, _coerce(key, value, getattr(cfg, key)))
+
     return cfg.prepare()
+
+
+def save_overlay(config: Config, section: str, updates: dict) -> Path:
+    """Persist page edits to `<data_dir>/settings.toml`, merging what is there.
+
+    Writing the overlay instead of `config.toml` is the point: your commented
+    file stays yours, and deleting the overlay undoes every page change.
+    """
+    path = config.data_dir / OVERLAY_FILE
+    data: dict = {}
+    if path.is_file():
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+
+    values = dict(_as_dict(data.get(section)))
+    for key, value in updates.items():
+        if value is None:
+            values.pop(key, None)
+        else:
+            values[key] = value
+
+    if values:
+        data[section] = values
+    else:
+        data.pop(section, None)
+
+    lines = [OVERLAY_HEADER.rstrip(), ""]
+    for name, section_values in data.items():
+        lines.append(f"[{name}]")
+        for key, value in section_values.items():
+            lines.append(f"{key} = {_toml_value(value)}")
+        lines.append("")
+    path.write_text("\n".join(lines).lstrip() + "\n", encoding="utf-8")
+    return path
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def describe(cfg: Config) -> str:

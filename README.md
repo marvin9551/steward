@@ -80,6 +80,11 @@ in the browser and print it with `steward history` afterwards.
   allow for this process, or deny.
 - Sessions, the permission mode, and the reasoning toggle live in the page;
   changing the mode takes effect on the next tool call.
+- The gear icon opens provider settings — `base_url`, model, api key,
+  temperature — with a "test connection" button. Saves land in
+  `~/.steward/settings.toml`, an overlay the page owns; your `config.toml` is
+  never rewritten, and `STEWARD_*` environment variables still win (locked
+  fields are shown as locked).
 
 The built bundle is committed, so no Node toolchain is needed to run it. The
 source is `web/` (React 18 + Vite + Tailwind + shadcn/ui); rebuild with:
@@ -103,6 +108,10 @@ variables override the file, so a key never has to live in the repository:
 | `STEWARD_WORKSPACE` | workspace directory |
 | `STEWARD_DATA_DIR` | database / data directory |
 | `STEWARD_PERMISSION` | `read-only`, `workspace-write`, `full` |
+
+Precedence, weakest to strongest: defaults → `config.toml` →
+`~/.steward/settings.toml` (written by the web page's provider dialog) →
+`STEWARD_*` environment variables.
 
 Any OpenAI-compatible endpoint works: OpenAI, DeepSeek, GLM, Qwen, Moonshot,
 MiniMax, a local Ollama or vLLM server, or a gateway. Tool calling must be

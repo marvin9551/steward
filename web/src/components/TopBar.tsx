@@ -1,6 +1,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import type { PermissionMode, Status } from '@/lib/api'
+import { ProviderDialog } from '@/components/ProviderDialog'
+import type { PermissionMode, ProviderProbe, ProviderSettings, ProviderUpdate, Status } from '@/lib/api'
 
 interface Props {
   status: Status | null
@@ -8,9 +9,23 @@ interface Props {
   showReasoning: boolean
   onToggleReasoning: (value: boolean) => void
   onPermission: (mode: PermissionMode) => void
+  provider: ProviderSettings | null
+  onSaveProvider: (update: ProviderUpdate) => Promise<ProviderSettings>
+  onTestProvider: () => Promise<ProviderProbe>
+  onNote: (note: string) => void
 }
 
-export function TopBar({ status, session, showReasoning, onToggleReasoning, onPermission }: Props) {
+export function TopBar({
+  status,
+  session,
+  showReasoning,
+  onToggleReasoning,
+  onPermission,
+  provider,
+  onSaveProvider,
+  onTestProvider,
+  onNote,
+}: Props) {
   const modes = status?.permissions ?? []
 
   return (
@@ -44,6 +59,13 @@ export function TopBar({ status, session, showReasoning, onToggleReasoning, onPe
             </SelectContent>
           </Select>
         </div>
+
+        <ProviderDialog
+          provider={provider}
+          onSave={onSaveProvider}
+          onTest={onTestProvider}
+          onNote={onNote}
+        />
       </div>
     </header>
   )

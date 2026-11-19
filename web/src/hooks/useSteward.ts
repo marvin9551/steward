@@ -3,6 +3,8 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import {
   api,
   type PermissionMode,
+  type ProviderSettings,
+  type ProviderUpdate,
   type SessionRow,
   type Status,
   type StreamEvent,
@@ -23,6 +25,7 @@ function describeError(error: unknown): string {
  */
 export function useSteward() {
   const [status, setStatus] = useState<Status | null>(null)
+  const [provider, setProvider] = useState<ProviderSettings | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [session, setSessionState] = useState<string | null>(null)
   const [blocks, dispatch] = useReducer(reducer, [] as Block[])
@@ -98,6 +101,11 @@ export function useSteward() {
         case 'config':
           setStatus((current) => (current ? { ...current, permission: event.permission } : current))
           break
+        case 'provider': {
+          const { type: _type, ...settings } = event
+          setProvider(settings)
+          break
+        }
         case 'resync':
           setNote('连接中断过久，已重新载入会话记录')
           void reloadCurrent()
@@ -115,9 +123,10 @@ export function useSteward() {
     let cancelled = false
     void (async () => {
       try {
-        const data = await api.status()
+        const [data, providerSettings] = await Promise.all([api.status(), api.provider()])
         if (cancelled) return
         setStatus(data)
+        setProvider(providerSettings)
         setBusy(data.busy)
         if (data.latest_session) {
           await loadTranscript(data.latest_session)
@@ -220,19 +229,31 @@ export function useSteward() {
     }
   }, [])
 
+  const saveProvider = useCallback(async (update: ProviderUpdate) => {
+    const result = await api.updateProvider(update)
+    setProvider(result)
+    return result
+  }, [])
+
+  const testProvider = useCallback(async () => api.testProvider(), [])
+
   return {
     status,
+    provider,
     sessions,
     session,
     blocks,
     busy,
     connected,
     note,
+    setNote,
     send,
     newSession,
     selectSession,
     decide,
     setPermission,
+    saveProvider,
+    testProvider,
   }
 }
 
