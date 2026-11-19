@@ -80,8 +80,10 @@ in the browser and print it with `steward history` afterwards.
   allow for this process, or deny.
 - Sessions, the permission mode, and the reasoning toggle live in the page;
   changing the mode takes effect on the next tool call.
-- The gear icon opens provider settings — `base_url`, model, api key,
-  temperature — with a "test connection" button. Saves land in
+- The gear icon opens provider settings: pick a preset (DeepSeek, OpenAI, GLM,
+  Moonshot, local Ollama, or an internal gateway such as opencode go), paste
+  the key, and **同步模型** pulls the model list straight from the gateway
+  (`GET /v1/models`) so you pick instead of typing. Saves land in
   `~/.steward/settings.toml`, an overlay the page owns; your `config.toml` is
   never rewritten, and `STEWARD_*` environment variables still win (locked
   fields are shown as locked).

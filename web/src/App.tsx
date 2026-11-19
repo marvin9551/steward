@@ -64,6 +64,7 @@ export default function App() {
           provider={steward.provider}
           onSaveProvider={steward.saveProvider}
           onTestProvider={steward.testProvider}
+          onSyncModels={steward.syncModels}
           onNote={steward.setNote}
         />
 

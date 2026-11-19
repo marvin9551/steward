@@ -250,6 +250,11 @@ export function useSteward() {
 
   const testProvider = useCallback(async () => api.testProvider(), [])
 
+  const syncModels = useCallback(
+    (baseUrl?: string, apiKey?: string) => api.syncModels(baseUrl, apiKey),
+    [],
+  )
+
   return {
     status,
     provider,
@@ -267,6 +272,7 @@ export function useSteward() {
     setPermission,
     saveProvider,
     testProvider,
+    syncModels,
   }
 }
 

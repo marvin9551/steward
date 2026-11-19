@@ -65,6 +65,13 @@ class ProviderUpdate(BaseModel):
     stream_usage: bool | None = None
 
 
+class ModelSync(BaseModel):
+    """Unsaved dialog values, so you can sync before you save."""
+
+    base_url: str | None = None
+    api_key: str | None = None
+
+
 def get_service(request: Request) -> WebService:
     return request.app.state.service
 
@@ -170,6 +177,10 @@ def create_app(
     @app.post("/api/provider/test")
     async def test_provider(service: WebService = ServiceDep) -> dict:
         return await service.probe_provider()
+
+    @app.post("/api/models")
+    async def models(body: ModelSync, service: WebService = ServiceDep) -> dict:
+        return await service.list_models(body.base_url, body.api_key)
 
     # -- stream ---------------------------------------------------------
 

@@ -17,7 +17,7 @@ from steward.core.events import (
 )
 from steward.providers.base import ProviderError, ProviderResult
 from steward.web.approvals import ApprovalRegistry
-from steward.web.service import Busy, UnknownSession, WebService
+from steward.web.service import Busy, UnknownSession, WebService, parse_model_ids
 from steward.web.stream import EventLog, encode
 
 try:  # the optional [web] extra: the agent loop itself does not need it
@@ -418,6 +418,87 @@ class TestProviderSettings(ServiceTestCase):
         self.assertFalse(failure["ok"])
         self.assertIn("401", failure["error"])
 
+    async def test_list_models_uses_saved_and_unsaved_values(self):
+        self.config.api_key = "sk-saved"
+        seen: list[tuple[str, str]] = []
+
+        async def fetch(url: str, api_key: str) -> list[str]:
+            seen.append((url, api_key))
+            return ["glm-5.3", "deepseek-chat"]
+
+        service = self.start(FakeProvider([]))
+        service._fetch_models = fetch
+
+        # No overrides: the saved config decides. The seam returns the list as
+        # given; sorting is fetch_model_ids' job.
+        result = await service.list_models()
+        self.assertEqual(result["models"], ["glm-5.3", "deepseek-chat"])
+        self.assertTrue(seen[-1][0].endswith("/models"))
+        self.assertEqual(seen[-1][1], "sk-saved")
+
+        # Unsaved form values win, so sync works before the first save.
+        result = await service.list_models("https://gateway.internal/v1", "form-key")
+        self.assertTrue(seen[-1][0].startswith("https://gateway.internal/v1/models"))
+        self.assertEqual(seen[-1][1], "form-key")
+        self.assertEqual(len(result["models"]), 2)
+
+    async def test_list_models_needs_a_key_and_a_url(self):
+        service = self.start(FakeProvider([]))
+
+        no_key = await service.list_models()
+        self.assertIn("api_key is empty", no_key["error"])
+
+        self.config.api_key = "sk-x"
+        bad_url = await service.list_models("ftp://nope")
+        self.assertIn("http://", bad_url["error"])
+
+    async def test_list_models_reports_gateway_errors(self):
+        async def fetch(url: str, api_key: str) -> list[str]:
+            raise RuntimeError("HTTP 502: bad gateway")
+
+        service = self.start(FakeProvider([]))
+        service._fetch_models = fetch
+        self.config.api_key = "sk-x"
+
+        result = await service.list_models()
+        self.assertEqual(result["models"], [])
+        self.assertIn("502", result["error"])
+
+    async def test_env_locked_values_are_ignored_by_sync(self):
+        self.config.api_key = "sk-saved"
+        self.config.env_overrides = ["base_url", "api_key"]
+        seen: list[tuple[str, str]] = []
+
+        async def fetch(url: str, api_key: str) -> list[str]:
+            seen.append((url, api_key))
+            return ["m1"]
+
+        service = self.start(FakeProvider([]))
+        service._fetch_models = fetch
+
+        await service.list_models("https://form-url/v1", "form-key")
+
+        self.assertNotIn("form-url", seen[-1][0])
+        self.assertEqual(seen[-1][1], "sk-saved")
+
+
+class TestParseModelIds(unittest.TestCase):
+    def test_accepts_the_shapes_gateways_actually_return(self):
+        cases = [
+            ({"data": [{"id": "a"}, {"id": "b"}]}, ["a", "b"]),
+            ({"data": ["a", "b"]}, ["a", "b"]),
+            ({"models": [{"id": "a"}, {"name": "b"}]}, ["a", "b"]),
+            (["a", "b"], ["a", "b"]),
+            ({"data": [{"id": "a"}, {"id": "a"}]}, ["a"]),
+        ]
+        for payload, expected in cases:
+            self.assertEqual(parse_model_ids(payload), expected, msg=repr(payload))
+
+    def test_garbage_is_empty_not_an_error(self):
+        self.assertEqual(parse_model_ids({"error": "x"}), [])
+        self.assertEqual(parse_model_ids(None), [])
+        self.assertEqual(parse_model_ids("text"), [])
+
 
 @unittest.skipUnless(HAS_WEB, "install the [web] extra: pip install -e '.[web]'")
 class TestStreamEvents(ServiceTestCase):
@@ -556,6 +637,13 @@ class TestHttpSurface(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertFalse(payload["ok"])
+        self.assertIn("api_key", payload["error"])
+
+    def test_models_sync_reports_a_missing_key_without_network(self):
+        response = self.client.post("/api/models", json={})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["models"], [])
         self.assertIn("api_key", payload["error"])
 
     def test_permission_change_is_visible_in_status(self):

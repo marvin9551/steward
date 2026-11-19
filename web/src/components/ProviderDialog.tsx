@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Loader2, PlugZap, Settings2 } from 'lucide-react'
+import { Loader2, PlugZap, RefreshCw, Settings2 } from 'lucide-react'
 
-import type { ProviderProbe, ProviderSettings, ProviderUpdate } from '@/lib/api'
+import type { ModelSyncResult, ProviderProbe, ProviderSettings, ProviderUpdate } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,28 +14,86 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { cn } from '@/lib/utils'
 
 interface Props {
   provider: ProviderSettings | null
   onSave: (update: ProviderUpdate) => Promise<ProviderSettings>
   onTest: () => Promise<ProviderProbe>
+  onSyncModels: (base_url?: string, api_key?: string) => Promise<ModelSyncResult>
   onNote: (note: string) => void
 }
+
+/** base_url presets; `opencode-go` is an internal gateway, so it only sets hints. */
+const PRESETS: Array<{
+  id: string
+  label: string
+  base_url?: string
+  model?: string
+  hint?: string
+}> = [
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    base_url: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    hint: '官方端点，模型名以 deepseek- 开头',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    base_url: 'https://api.openai.com/v1',
+    model: 'gpt-4o',
+    hint: '需要支持工具调用的模型',
+  },
+  {
+    id: 'glm',
+    label: '智谱 GLM',
+    base_url: 'https://open.bigmodel.cn/api/paas/v4',
+    model: 'glm-4-plus',
+    hint: 'OpenAI 兼容端点，支持 glm-4 系列',
+  },
+  {
+    id: 'moonshot',
+    label: 'Moonshot',
+    base_url: 'https://api.moonshot.cn/v1',
+    model: 'moonshot-v1-8k',
+    hint: 'OpenAI 兼容端点',
+  },
+  {
+    id: 'ollama',
+    label: 'Ollama（本地）',
+    base_url: 'http://127.0.0.1:11434/v1',
+    model: 'qwen2.5',
+    hint: '本地推理，key 可填任意值（如 ollama）',
+  },
+  {
+    id: 'opencode-go',
+    label: 'opencode go（内部网关）',
+    hint: '内部 OpenAI 兼容网关：填入地址（通常以 /v1 结尾）和 key，然后点「同步模型」拉取模型列表',
+  },
+  { id: 'custom', label: '自定义', hint: '任意 OpenAI 兼容端点' },
+]
 
 const EMPTY_PROBE: ProviderProbe = { ok: false, error: '' }
 
 /**
- * Provider settings dialog: base_url / model / api_key / temperature.
- * The key field is write-only — the API never returns it, and leaving the field
- * empty keeps the current one. Fields pinned by STEWARD_* env vars are locked.
+ * Provider settings dialog: preset or custom endpoint, model sync from the
+ * gateway, and a write-only key field. Fields pinned by STEWARD_* env vars are
+ * locked; the key never travels back to the page.
  */
-export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
+export function ProviderDialog({ provider, onSave, onTest, onSyncModels, onNote }: Props) {
   const [open, setOpen] = useState(false)
+  const [preset, setPreset] = useState('custom')
   const [form, setForm] = useState<ProviderUpdate>({})
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [probe, setProbe] = useState<ProviderProbe>(EMPTY_PROBE)
+  const [syncing, setSyncing] = useState(false)
+  const [synced, setSynced] = useState<string[]>([])
+  const [syncError, setSyncError] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -47,11 +105,25 @@ export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
       stream_usage: provider.stream_usage,
       api_key: '',
     })
+    setPreset(matchPreset(provider.base_url))
     setProbe(EMPTY_PROBE)
+    setSynced([])
+    setSyncError('')
     setError('')
   }, [open, provider])
 
   const locked = (field: string) => Boolean(provider?.env_overrides?.includes(field))
+
+  const applyPreset = (id: string) => {
+    setPreset(id)
+    const found = PRESETS.find((item) => item.id === id)
+    if (!found || locked('base_url')) return
+    setForm((current) => ({
+      ...current,
+      base_url: found.base_url ?? current.base_url ?? '',
+      model: found.model ?? current.model ?? '',
+    }))
+  }
 
   const save = async () => {
     setSaving(true)
@@ -86,6 +158,35 @@ export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
     }
   }
 
+  const sync = async () => {
+    setSyncing(true)
+    setSyncError('')
+    try {
+      // Pass the unsaved form values so "paste URL + key → sync → pick" is
+      // one visit; empty key means "use the saved one" server-side.
+      const result = await onSyncModels(
+        locked('base_url') ? undefined : form.base_url,
+        locked('api_key') ? undefined : form.api_key || undefined,
+      )
+      if (result.error) {
+        setSynced([])
+        setSyncError(result.error)
+        return
+      }
+      setSynced(result.models)
+      setForm((current) => ({
+        ...current,
+        model: current.model || result.models[0] || current.model,
+      }))
+    } catch (cause) {
+      setSyncError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const presetHint = PRESETS.find((item) => item.id === preset)?.hint
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -110,6 +211,23 @@ export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
         ) : null}
 
         <div className="grid gap-4">
+          <div className="grid gap-1.5">
+            <Label>预设</Label>
+            <Select value={preset} onValueChange={applyPreset}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PRESETS.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {presetHint ? <span className="text-[15px] text-muted-foreground">{presetHint}</span> : null}
+          </div>
+
           <Field label="Base URL" locked={locked('base_url')} hint="OpenAI 兼容端点，通常以 /v1 结尾">
             <Input
               value={form.base_url ?? ''}
@@ -119,14 +237,48 @@ export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
             />
           </Field>
 
-          <Field label="Model" locked={locked('model')} hint="需要支持工具调用">
+          <div className="grid gap-1.5">
+            <div className="flex items-baseline justify-between">
+              <Label>Model</Label>
+              <button
+                type="button"
+                onClick={sync}
+                disabled={syncing || !provider}
+                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[15px] font-semibold text-info transition-colors hover:bg-info-soft disabled:opacity-50"
+              >
+                {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                同步模型
+              </button>
+            </div>
             <Input
               value={form.model ?? ''}
               disabled={locked('model')}
               placeholder="deepseek-chat"
               onChange={(event) => setForm({ ...form, model: event.target.value })}
             />
-          </Field>
+            {syncError ? (
+              <p className="whitespace-pre-wrap break-words font-mono text-[15px] text-brand">{syncError}</p>
+            ) : null}
+            {synced.length ? (
+              <div className="flex max-h-36 flex-wrap gap-2 overflow-y-auto rounded-md bg-secondary/60 p-2">
+                {synced.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setForm((current) => ({ ...current, model: id }))}
+                    className={cn(
+                      'rounded-full border px-3 py-1 font-mono text-[15px] transition-colors',
+                      form.model === id
+                        ? 'border-info bg-info-soft text-info'
+                        : 'border-border bg-background text-foreground hover:bg-accent',
+                    )}
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
 
           <Field
             label="API Key"
@@ -206,6 +358,11 @@ export function ProviderDialog({ provider, onSave, onTest, onNote }: Props) {
       </DialogContent>
     </Dialog>
   )
+}
+
+function matchPreset(base_url: string): string {
+  const found = PRESETS.find((item) => item.base_url === base_url)
+  return found?.id ?? 'custom'
 }
 
 function Field({

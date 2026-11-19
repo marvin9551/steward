@@ -66,6 +66,11 @@ export interface ProviderProbe {
   error?: string
 }
 
+export interface ModelSyncResult {
+  models: string[]
+  error?: string
+}
+
 export interface StoredBlock {
   kind: 'user' | 'assistant' | 'reasoning' | 'notice' | 'error' | 'tool'
   text?: string
@@ -141,4 +146,10 @@ export const api = {
 
   testProvider: () =>
     request<ProviderProbe>('/api/provider/test', { method: 'POST', body: '{}' }),
+
+  syncModels: (base_url?: string, api_key?: string) =>
+    request<ModelSyncResult>('/api/models', {
+      method: 'POST',
+      body: JSON.stringify({ base_url, api_key }),
+    }),
 }

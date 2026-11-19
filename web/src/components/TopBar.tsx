@@ -1,7 +1,14 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ProviderDialog } from '@/components/ProviderDialog'
-import type { PermissionMode, ProviderProbe, ProviderSettings, ProviderUpdate, Status } from '@/lib/api'
+import type {
+  ModelSyncResult,
+  PermissionMode,
+  ProviderProbe,
+  ProviderSettings,
+  ProviderUpdate,
+  Status,
+} from '@/lib/api'
 
 interface Props {
   status: Status | null
@@ -12,6 +19,7 @@ interface Props {
   provider: ProviderSettings | null
   onSaveProvider: (update: ProviderUpdate) => Promise<ProviderSettings>
   onTestProvider: () => Promise<ProviderProbe>
+  onSyncModels: (baseUrl?: string, apiKey?: string) => Promise<ModelSyncResult>
   onNote: (note: string) => void
 }
 
@@ -24,6 +32,7 @@ export function TopBar({
   provider,
   onSaveProvider,
   onTestProvider,
+  onSyncModels,
   onNote,
 }: Props) {
   const modes = status?.permissions ?? []
@@ -64,6 +73,7 @@ export function TopBar({
           provider={provider}
           onSave={onSaveProvider}
           onTest={onTestProvider}
+          onSyncModels={onSyncModels}
           onNote={onNote}
         />
       </div>

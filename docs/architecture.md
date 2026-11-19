@@ -181,6 +181,7 @@ page (EventSource) ◀─ GET /api/stream ┘  (async generator)
 | `GET /api/provider` | provider settings; the key is reported as a boolean |
 | `POST /api/provider` | edit settings; empty `api_key` keeps the current one |
 | `POST /api/provider/test` | one tiny real request to verify the saved key |
+| `POST /api/models` | sync the model list from the gateway; accepts unsaved form values |
 
 `/docs` and `/openapi.json` come with FastAPI; request bodies are Pydantic models
 and every error is normalized to `{"error": "..."}`, the shape the page speaks.
@@ -203,12 +204,17 @@ per tool name for the life of the process, so restarting restores the terminal's
 caution.
 
 **Provider settings from the page.** The gear dialog edits `base_url`, model,
-key and temperature. Saves go to `~/.steward/settings.toml` — an overlay
-`config.load()` applies on top of `config.toml` — instead of rewriting your
-commented file. The key is write-only over HTTP: `GET /api/provider` returns
-`api_key_set`, and posting an empty key keeps the current one. Fields set by
-`STEWARD_*` environment variables can never be replaced by a file, so the
-service refuses those edits and the dialog locks the inputs.
+key and temperature. Presets fill known endpoints; an internal gateway
+("opencode go" style) is just a labeled custom slot — any OpenAI-compatible
+URL works. **同步模型** asks the gateway for its model list so you pick instead
+of typing, and accepts the unsaved form values, which makes the first visit one
+flow: paste URL + key → sync → pick → save. Saves go to
+`~/.steward/settings.toml` — an overlay `config.load()` applies on top of
+`config.toml` — instead of rewriting your commented file. The key is write-only
+over HTTP: `GET /api/provider` returns `api_key_set`, and posting an empty key
+keeps the current one. Fields set by `STEWARD_*` environment variables can
+never be replaced by a file, so the service refuses those edits and the dialog
+locks the inputs.
 
 The page is `web/` (React 18, Vite, Tailwind, shadcn/ui). It builds into
 `steward/web/static/`, which is committed so the UI needs no Node toolchain at

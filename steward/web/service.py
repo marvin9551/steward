@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
+
 from steward import __version__
 from steward.config import PERMISSION_MODES, Config, save_overlay
 from steward.core.runner import Runner
@@ -39,6 +41,7 @@ from steward.web.stream import EventLog, encode
 
 APPROVAL_TIMEOUT = 900.0
 PROVIDER_FIELDS = ("base_url", "model", "api_key", "temperature", "stream_usage")
+MODELS_TIMEOUT = 15.0
 
 
 class Busy(RuntimeError):
@@ -57,6 +60,7 @@ class WebService:
         self.store = SessionStore(config.db_path)
         self._provider = provider
         self._probe = probe or stream_chat
+        self._fetch_models = fetch_model_ids
         self._task: asyncio.Task | None = None
         self._busy_session: str | None = None
         self._always_allow: set[str] = set()
@@ -205,6 +209,32 @@ class WebService:
         except ProviderError as exc:
             return {"ok": False, "error": str(exc)[:300]}
 
+    async def list_models(self, base_url: str | None = None, api_key: str | None = None) -> dict:
+        """Ask the gateway for its model list (`GET {base_url}/models`).
+
+        Unsaved form values may be passed in, so the flow is
+        "paste URL + key → sync → pick → save" in one visit. An empty key falls
+        back to the saved one; env-locked fields ignore the override.
+        """
+        url = base_url.strip() if base_url else ""
+        if not url or "base_url" in self.config.env_overrides:
+            url = self.config.base_url
+        if not url.startswith(("http://", "https://")):
+            return {"models": [], "error": "base_url must start with http:// or https://"}
+
+        key = api_key or ""
+        if not key or "api_key" in self.config.env_overrides:
+            key = self.config.api_key
+        if not key:
+            return {"models": [], "error": "api_key is empty: set it before syncing"}
+
+        try:
+            return {"models": await self._fetch_models(url.rstrip("/") + "/models", key)}
+        except Exception as exc:  # noqa: BLE001 - surfaced to the dialog
+            return {"models": [], "error": f"{type(exc).__name__}: {exc}"[:300]}
+
+    # -- turn execution -------------------------------------------------
+
     async def start_turn(self, session_id: str, text: str) -> str:
         text = text.strip()
         if not text:
@@ -266,6 +296,45 @@ class WebService:
         # The runner hands us typed events; the service itself publishes dicts.
         data = payload if isinstance(payload, dict) else encode(payload)
         return self.events.publish(data)
+
+
+async def fetch_model_ids(url: str, api_key: str) -> list[str]:
+    """`GET {base_url}/models` with the OpenAI-compatible Bearer header.
+
+    Gateways disagree on the response shape, so anything list-like with `id`
+    members (or plain strings) is accepted; unknown shapes raise, and the
+    dialog shows the message instead of an empty list pretending to be truth.
+    """
+    async with httpx.AsyncClient(timeout=MODELS_TIMEOUT) as client:
+        response = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
+    if response.status_code >= 400:
+        raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
+    ids = parse_model_ids(response.json())
+    if not ids:
+        raise RuntimeError("the response did not contain a model list")
+    return sorted(ids)
+
+
+def parse_model_ids(payload: object) -> list[str]:
+    """Accept the shapes seen in the wild: `data`/`models`, objects or strings."""
+    if isinstance(payload, list):
+        candidates: list[object] = payload
+    elif isinstance(payload, dict):
+        candidates = payload.get("data") or payload.get("models") or []
+        if isinstance(candidates, dict):
+            candidates = list(candidates.values())
+    else:
+        return []
+
+    ids: list[str] = []
+    for item in candidates:
+        if isinstance(item, str):
+            ids.append(item)
+        elif isinstance(item, dict):
+            value = item.get("id") or item.get("name")
+            if isinstance(value, str):
+                ids.append(value)
+    return sorted(set(ids))
 
 
 def _blocks(messages: list[dict]) -> list[dict]:
