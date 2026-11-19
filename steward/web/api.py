@@ -72,6 +72,22 @@ class ModelSync(BaseModel):
     api_key: str | None = None
 
 
+class ProfileSave(BaseModel):
+    name: str
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    temperature: float | None = None
+    stream_usage: bool | None = None
+    # The settings dialog applies the same values to the active provider, so
+    # the profile it files them under is the one in effect.
+    mark_active: bool = False
+
+
+class ProfileApply(BaseModel):
+    name: str
+
+
 def get_service(request: Request) -> WebService:
     return request.app.state.service
 
@@ -181,6 +197,36 @@ def create_app(
     @app.post("/api/models")
     async def models(body: ModelSync, service: WebService = ServiceDep) -> dict:
         return await service.list_models(body.base_url, body.api_key)
+
+    # -- provider profiles ----------------------------------------------
+
+    @app.get("/api/profiles")
+    async def get_profiles(service: WebService = ServiceDep) -> dict:
+        return service.profiles()
+
+    @app.post("/api/profiles")
+    async def upsert_profile(body: ProfileSave, service: WebService = ServiceDep) -> dict:
+        try:
+            values = {key: value for key, value in body.model_dump().items() if key != "mark_active"}
+            return service.save_profile(body.name, values, mark_active=body.mark_active)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.post("/api/profiles/apply")
+    async def apply_profile(body: ProfileApply, service: WebService = ServiceDep) -> dict:
+        try:
+            return service.apply_profile(body.name)
+        except KeyError:
+            raise HTTPException(404, f"no such profile: {body.name}") from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.delete("/api/profiles/{name}")
+    async def remove_profile(name: str, service: WebService = ServiceDep) -> dict:
+        try:
+            return service.delete_profile(name)
+        except KeyError:
+            raise HTTPException(404, f"no such profile: {name}") from None
 
     # -- stream ---------------------------------------------------------
 

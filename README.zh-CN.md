@@ -63,6 +63,7 @@ steward --config ./my.toml chat
 - `run_shell` 弹的是审批卡片而不是终端提示：允许一次 / 本次运行始终允许 / 拒绝。
 - 会话列表、权限模式、思考过程开关都在页面上；切换权限在下一次工具调用生效。
 - 右上角齿轮打开 Provider 设置：选预设（DeepSeek、OpenAI、GLM、Moonshot、本地 Ollama，或 opencode go 这类内部网关），贴上 key，点**同步模型**直接从网关（`GET /v1/models`）拉取模型列表挑选，不用手打名字。保存写入 `~/.steward/settings.toml`（页面专用的覆盖文件，不会改写你的 config.toml）；`STEWARD_*` 环境变量始终优先，被锁定的字段在页面上会显示为锁定。
+- 顶部的 **Provider** 页签常驻展示当前生效的配置，并把每个已保存的档案渲染成卡片——点一下切换、确认后删除。档案来自设置对话框里的「另存为档案」。
 
 构建产物已提交进仓库，运行界面不需要 Node 工具链。源码在 `web/`（React 18 + Vite + Tailwind + shadcn/ui），重新构建：
 

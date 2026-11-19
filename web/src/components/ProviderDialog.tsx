@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, PlugZap, RefreshCw, Settings2 } from 'lucide-react'
+import { Loader2, PlugZap, RefreshCw } from 'lucide-react'
 
 import type { ModelSyncResult, ProviderProbe, ProviderSettings, ProviderUpdate } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,10 +18,13 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
 interface Props {
+  open: boolean
+  onOpenChange: (open: boolean) => void
   provider: ProviderSettings | null
   onSave: (update: ProviderUpdate) => Promise<ProviderSettings>
   onTest: () => Promise<ProviderProbe>
   onSyncModels: (base_url?: string, api_key?: string) => Promise<ModelSyncResult>
+  onSaveProfile: (name: string, update: ProviderUpdate) => Promise<unknown>
   onNote: (note: string) => void
 }
 
@@ -84,10 +86,19 @@ const EMPTY_PROBE: ProviderProbe = { ok: false, error: '' }
  * gateway, and a write-only key field. Fields pinned by STEWARD_* env vars are
  * locked; the key never travels back to the page.
  */
-export function ProviderDialog({ provider, onSave, onTest, onSyncModels, onNote }: Props) {
-  const [open, setOpen] = useState(false)
+export function ProviderDialog({
+  open,
+  onOpenChange,
+  provider,
+  onSave,
+  onTest,
+  onSyncModels,
+  onSaveProfile,
+  onNote,
+}: Props) {
   const [preset, setPreset] = useState('custom')
   const [form, setForm] = useState<ProviderUpdate>({})
+  const [profileName, setProfileName] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [probe, setProbe] = useState<ProviderProbe>(EMPTY_PROBE)
@@ -109,6 +120,7 @@ export function ProviderDialog({ provider, onSave, onTest, onSyncModels, onNote 
     setProbe(EMPTY_PROBE)
     setSynced([])
     setSyncError('')
+    setProfileName('')
     setError('')
   }, [open, provider])
 
@@ -136,8 +148,19 @@ export function ProviderDialog({ provider, onSave, onTest, onSyncModels, onNote 
         if (!locked(key)) payload[key] = value
       }
       await onSave(payload as ProviderUpdate)
-      setOpen(false)
-      onNote('Provider 设置已保存，下一次模型调用生效')
+
+      // Optionally keep this exact set of values as a switchable profile.
+      const name = profileName.trim()
+      if (name) {
+        await onSaveProfile(name, payload as ProviderUpdate)
+      }
+
+      onOpenChange(false)
+      onNote(
+        name
+          ? `Provider 设置与档案 ${name} 已保存，下一次模型调用生效`
+          : 'Provider 设置已保存，下一次模型调用生效',
+      )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -188,12 +211,7 @@ export function ProviderDialog({ provider, onSave, onTest, onSyncModels, onNote 
   const presetHint = PRESETS.find((item) => item.id === preset)?.hint
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="ghost" size="icon" title="Provider 设置">
-          <Settings2 className="h-5 w-5" />
-        </Button>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Provider 设置</DialogTitle>
@@ -326,6 +344,20 @@ export function ProviderDialog({ provider, onSave, onTest, onSyncModels, onNote 
                 onCheckedChange={(value) => setForm({ ...form, stream_usage: value })}
               />
             </div>
+          </div>
+
+          <div className="grid gap-1.5">
+            <div className="flex items-baseline justify-between">
+              <Label>另存为档案（可选）</Label>
+              <span className="text-[15px] text-muted-foreground">
+                保存后可在「Provider」页签一键切换
+              </span>
+            </div>
+            <Input
+              value={profileName}
+              placeholder="如 opencode-go、deepseek（字母 / 数字 / - / _）"
+              onChange={(event) => setProfileName(event.target.value)}
+            />
           </div>
 
           {error ? (

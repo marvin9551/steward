@@ -5,7 +5,9 @@ Precedence, weakest to strongest:
 1. defaults
 2. `config.toml` — the file you edit by hand
 3. `<data_dir>/settings.toml` — written by the web UI; the page edits this
-   overlay instead of rewriting your commented file
+   overlay instead of rewriting your commented file. It also stores named
+   provider profiles (`[profiles.<name>]`) the page can switch between;
+   `config.load()` ignores those sections.
 4. `STEWARD_*` environment variables — a key can stay out of every file
 
 No pydantic here on purpose. The config is a flat set of values; a dataclass
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +27,7 @@ from pathlib import Path
 PERMISSION_MODES = ("read-only", "workspace-write", "full")
 DEFAULT_CONFIG_FILE = Path("config.toml")
 OVERLAY_FILE = "settings.toml"
+PROFILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,31}")
 OVERLAY_HEADER = (
     "# Managed by the steward web UI; safe to delete.\n"
     "# Applied on top of config.toml. STEWARD_* environment variables still win.\n"
@@ -144,18 +148,47 @@ def load(path: str | Path | None = None) -> Config:
     return cfg.prepare()
 
 
+def read_overlay(config: Config) -> dict:
+    """The page-managed overlay, or {} if none exists yet."""
+    path = config.data_dir / OVERLAY_FILE
+    if not path.is_file():
+        return {}
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def write_overlay(config: Config, data: dict) -> Path:
+    """Serialize the overlay. Two levels of nesting: `[profiles]` holds the
+    active marker, `[profiles.<name>]` holds one profile each."""
+    lines = [OVERLAY_HEADER.rstrip(), ""]
+    for name, values in data.items():
+        if not isinstance(values, dict):
+            lines.append(f"{name} = {_toml_value(values)}")
+            continue
+        scalars = {k: v for k, v in values.items() if not isinstance(v, dict)}
+        if scalars or not values:
+            lines.append(f"[{name}]")
+            for key, value in scalars.items():
+                lines.append(f"{key} = {_toml_value(value)}")
+            lines.append("")
+        for key, nested in values.items():
+            if isinstance(nested, dict):
+                lines.append(f"[{name}.{key}]")
+                for sub_key, value in nested.items():
+                    lines.append(f"{sub_key} = {_toml_value(value)}")
+                lines.append("")
+    path = config.data_dir / OVERLAY_FILE
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return path
+
+
 def save_overlay(config: Config, section: str, updates: dict) -> Path:
     """Persist page edits to `<data_dir>/settings.toml`, merging what is there.
 
     Writing the overlay instead of `config.toml` is the point: your commented
     file stays yours, and deleting the overlay undoes every page change.
     """
-    path = config.data_dir / OVERLAY_FILE
-    data: dict = {}
-    if path.is_file():
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-
+    data = read_overlay(config)
     values = dict(_as_dict(data.get(section)))
     for key, value in updates.items():
         if value is None:
@@ -167,15 +200,36 @@ def save_overlay(config: Config, section: str, updates: dict) -> Path:
         data[section] = values
     else:
         data.pop(section, None)
+    return write_overlay(config, data)
 
-    lines = [OVERLAY_HEADER.rstrip(), ""]
-    for name, section_values in data.items():
-        lines.append(f"[{name}]")
-        for key, value in section_values.items():
-            lines.append(f"{key} = {_toml_value(value)}")
-        lines.append("")
-    path.write_text("\n".join(lines).lstrip() + "\n", encoding="utf-8")
-    return path
+
+def save_profile(config: Config, name: str, values: dict) -> Path:
+    """Upsert one provider profile under `[profiles.<name>]`."""
+    profiles = dict(_as_dict(read_overlay(config).get("profiles")))
+    profiles[name] = dict(_as_dict(profiles.get(name))) | dict(values)
+    return write_overlay(config, {**read_overlay(config), "profiles": profiles})
+
+
+def delete_profile(config: Config, name: str) -> bool:
+    data = read_overlay(config)
+    profiles = _as_dict(data.get("profiles"))
+    if name not in profiles:
+        return False
+    del profiles[name]
+    if profiles.get("active") == name:
+        profiles.pop("active", None)
+    data["profiles"] = profiles
+    write_overlay(config, data)
+    return True
+
+
+def set_active_profile(config: Config, name: str) -> Path:
+    """Record which profile the active provider came from."""
+    data = read_overlay(config)
+    profiles = _as_dict(data.get("profiles"))
+    profiles["active"] = name
+    data["profiles"] = profiles
+    return write_overlay(config, data)
 
 
 def _toml_value(value: object) -> str:

@@ -71,6 +71,21 @@ export interface ModelSyncResult {
   error?: string
 }
 
+/** One saved provider profile; the key itself never leaves the server. */
+export interface ProfileRow {
+  name: string
+  base_url: string
+  model: string
+  api_key_set: boolean
+  temperature: number | null
+  stream_usage: boolean | null
+}
+
+export interface Profiles {
+  active: string | null
+  profiles: ProfileRow[]
+}
+
 export interface StoredBlock {
   kind: 'user' | 'assistant' | 'reasoning' | 'notice' | 'error' | 'tool'
   text?: string
@@ -152,4 +167,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ base_url, api_key }),
     }),
+
+  profiles: () => request<Profiles>('/api/profiles'),
+
+  saveProfile: (name: string, update: ProviderUpdate) =>
+    request<Profiles>('/api/profiles', {
+      method: 'POST',
+      body: JSON.stringify({ name, ...update, mark_active: true }),
+    }),
+
+  applyProfile: (name: string) =>
+    request<ProviderSettings>('/api/profiles/apply', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteProfile: (name: string) =>
+    request<Profiles>(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 }

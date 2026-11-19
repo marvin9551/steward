@@ -395,13 +395,17 @@ class TestProviderSettings(ServiceTestCase):
         service = self.start(FakeProvider([]))
         for bad in (
             {"base_url": "ftp://api.test"},
-            {"base_url": "   "},
             {"model": "   "},
             {"temperature": 9},
             {"temperature": "hot"},
         ):
             with self.assertRaises(ValueError, msg=repr(bad)):
                 service.set_provider(bad)
+
+        # Blank base_url means "keep", like a blank key.
+        before = self.config.base_url
+        service.set_provider({"base_url": "   "})
+        self.assertEqual(self.config.base_url, before)
 
     async def test_probe_reports_success_and_provider_errors(self):
         async def good(config, messages, tools, *, on_text=None, on_reasoning=None):
@@ -480,6 +484,71 @@ class TestProviderSettings(ServiceTestCase):
 
         self.assertNotIn("form-url", seen[-1][0])
         self.assertEqual(seen[-1][1], "sk-saved")
+
+
+class TestProfiles(ServiceTestCase):
+    def overlay(self) -> dict:
+        from steward.config import read_overlay
+
+        return read_overlay(self.config)
+
+    async def test_save_list_apply_delete_round_trip(self):
+        service = self.start(FakeProvider([]))
+        self.assertEqual(service.profiles(), {"active": None, "profiles": []})
+
+        listing = service.save_profile(
+            "opencode-go",
+            {"base_url": "https://go.internal/v1", "model": "glm-5.3", "api_key": "sk-go"},
+        )
+        self.assertEqual([row["name"] for row in listing["profiles"]], ["opencode-go"])
+        self.assertTrue(listing["profiles"][0]["api_key_set"])
+        self.assertNotIn("api_key", listing["profiles"][0])
+
+        # An empty key keeps the one already stored in the profile.
+        service.save_profile("opencode-go", {"api_key": "", "model": "glm-5.4"})
+        row = service.profiles()["profiles"][0]
+        self.assertEqual(row["model"], "glm-5.4")
+        self.assertTrue(row["api_key_set"])
+
+        # The settings dialog marks the profile it files under as current.
+        listing = service.save_profile(
+            "deepseek", {"base_url": "https://api.deepseek.com/v1"}, mark_active=True
+        )
+        self.assertEqual(listing["active"], "deepseek")
+        self.assertEqual(len(listing["profiles"]), 2)
+
+        # Apply: absent fields keep their current values.
+        self.config.temperature = 1.5
+        settings = service.apply_profile("opencode-go")
+        self.assertEqual(settings["base_url"], "https://go.internal/v1")
+        self.assertEqual(settings["model"], "glm-5.4")
+        self.assertEqual(settings["temperature"], 1.5)
+        self.assertEqual(service.profiles()["active"], "opencode-go")
+        self.assertEqual(self.config.api_key, "sk-go")  # applied but never listed
+
+    async def test_apply_never_overrides_env_locked_fields(self):
+        self.config.env_overrides = ["base_url"]
+        self.config.base_url = "https://env-url/v1"
+        service = self.start(FakeProvider([]))
+        service.save_profile("p1", {"base_url": "https://file-url/v1", "model": "m"})
+
+        service.apply_profile("p1")
+
+        self.assertEqual(self.config.base_url, "https://env-url/v1")
+        self.assertEqual(self.config.model, "m")
+
+    async def test_missing_profiles_raise_key_errors(self):
+        service = self.start(FakeProvider([]))
+        with self.assertRaises(KeyError):
+            service.apply_profile("ghost")
+        with self.assertRaises(KeyError):
+            service.delete_profile("ghost")
+
+    async def test_profile_names_are_validated(self):
+        service = self.start(FakeProvider([]))
+        for bad in ("", "   ", "has space", "x" * 40, "删除!"):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                service.save_profile(bad, {"model": "m"})
 
 
 class TestParseModelIds(unittest.TestCase):
@@ -645,6 +714,35 @@ class TestHttpSurface(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["models"], [])
         self.assertIn("api_key", payload["error"])
+
+    def test_profile_endpoints_round_trip(self):
+        created = self.client.post(
+            "/api/profiles",
+            json={
+                "name": "deepseek",
+                "base_url": "https://api.deepseek.com/v1",
+                "model": "deepseek-chat",
+                "api_key": "sk-d",
+            },
+        )
+        self.assertEqual(created.status_code, 200)
+        listed = self.client.get("/api/profiles").json()
+        self.assertEqual(listed["profiles"][0]["name"], "deepseek")
+        self.assertNotIn("api_key", listed["profiles"][0])
+
+        applied = self.client.post("/api/profiles/apply", json={"name": "deepseek"})
+        self.assertEqual(applied.status_code, 200)
+        self.assertEqual(applied.json()["model"], "deepseek-chat")
+        self.assertEqual(self.client.get("/api/provider").json()["model"], "deepseek-chat")
+
+        self.assertEqual(
+            self.client.post("/api/profiles/apply", json={"name": "ghost"}).status_code, 404
+        )
+        self.assertEqual(self.client.delete("/api/profiles/deepseek").status_code, 200)
+        self.assertEqual(self.client.delete("/api/profiles/deepseek").status_code, 404)
+        self.assertEqual(
+            self.client.post("/api/profiles", json={"name": "bad name!"}).status_code, 400
+        )
 
     def test_permission_change_is_visible_in_status(self):
         self.client.post("/api/permission", json={"mode": "read-only"})

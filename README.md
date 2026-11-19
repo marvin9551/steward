@@ -87,6 +87,9 @@ in the browser and print it with `steward history` afterwards.
   `~/.steward/settings.toml`, an overlay the page owns; your `config.toml` is
   never rewritten, and `STEWARD_*` environment variables still win (locked
   fields are shown as locked).
+- The **Provider** tab shows what is in effect right now, plus every saved
+  profile as a card — switch with one click, delete with a confirm. Profiles
+  are filed by filling 「另存为档案」 in the settings dialog.
 
 The built bundle is committed, so no Node toolchain is needed to run it. The
 source is `web/` (React 18 + Vite + Tailwind + shadcn/ui); rebuild with:

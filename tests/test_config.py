@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from steward.config import Config, load, save_overlay
+from steward.config import Config, load, read_overlay, save_overlay, save_profile, set_active_profile
+from steward.config import delete_profile as delete_stored_profile
 from steward.policy.permissions import ALLOW, ASK, DENY, decide
 
 
@@ -82,6 +83,32 @@ permission = "yolo"
         config = load(self.tmp / "missing.toml")
         self.assertEqual(config.model, "env-model")
         self.assertEqual(config.api_key, "overlay-key")
+
+    def test_profiles_round_trip_and_stay_out_of_the_active_config(self):
+        data = self.tmp / "data"
+        data.mkdir()
+        config = Config(data_dir=data)
+        os.environ["STEWARD_DATA_DIR"] = str(data)
+        os.environ["STEWARD_WORKSPACE"] = str(self.tmp / "ws")
+
+        save_profile(config, "deepseek", {"base_url": "https://api.deepseek.com/v1",
+                                          "model": "deepseek-chat", "api_key": "sk-1"})
+        save_profile(config, "opencode-go", {"base_url": "https://go.internal/v1",
+                                             "model": "glm-5.3"})
+        set_active_profile(config, "opencode-go")
+
+        overlay = read_overlay(config)
+        self.assertEqual(overlay["profiles"]["deepseek"]["model"], "deepseek-chat")
+        self.assertEqual(overlay["profiles"]["active"], "opencode-go")
+
+        # load() must ignore profile sections: a profile's key never leaks in.
+        loaded = load(self.tmp / "missing.toml")
+        self.assertEqual(loaded.api_key, "")
+        self.assertEqual(loaded.model, "deepseek-chat")  # the default, untouched
+
+        self.assertTrue(delete_stored_profile(config, "opencode-go"))
+        self.assertFalse(delete_stored_profile(config, "opencode-go"))
+        self.assertIsNone(read_overlay(config)["profiles"].get("active"))
 
     def test_save_overlay_merges_and_can_drop_a_key(self):
         data = self.tmp / "data"

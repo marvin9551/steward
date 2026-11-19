@@ -182,6 +182,10 @@ page (EventSource) ◀─ GET /api/stream ┘  (async generator)
 | `POST /api/provider` | edit settings; empty `api_key` keeps the current one |
 | `POST /api/provider/test` | one tiny real request to verify the saved key |
 | `POST /api/models` | sync the model list from the gateway; accepts unsaved form values |
+| `GET /api/profiles` | saved provider profiles; the active one is named, keys are booleans |
+| `POST /api/profiles` | upsert a profile (the dialog marks it active) |
+| `POST /api/profiles/apply` | copy a profile into the active provider |
+| `DELETE /api/profiles/<name>` | remove a profile |
 
 `/docs` and `/openapi.json` come with FastAPI; request bodies are Pydantic models
 and every error is normalized to `{"error": "..."}`, the shape the page speaks.
@@ -215,6 +219,14 @@ over HTTP: `GET /api/provider` returns `api_key_set`, and posting an empty key
 keeps the current one. Fields set by `STEWARD_*` environment variables can
 never be replaced by a file, so the service refuses those edits and the dialog
 locks the inputs.
+
+**Profiles.** The same overlay stores named provider sets
+(`[profiles.<name>]`, ignored by `config.load()`). The Provider tab lists them
+with what is in effect now; `apply` copies a profile into the active provider —
+absent fields keep their current values, env-locked fields refuse to come from
+a file — and deleting the active profile clears the marker but leaves the
+config alone. A profile without a key reuses whatever key is active, so one key
+can serve several endpoints.
 
 The page is `web/` (React 18, Vite, Tailwind, shadcn/ui). It builds into
 `steward/web/static/`, which is committed so the UI needs no Node toolchain at

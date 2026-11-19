@@ -161,6 +161,10 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 | `POST /api/provider` | 修改设置；`api_key` 传空表示保持不变 |
 | `POST /api/provider/test` | 发一次极小的真实请求验证 key |
 | `POST /api/models` | 从网关同步模型列表；可传未保存的表单值 |
+| `GET /api/profiles` | 已保存的档案；标出当前启用的，key 只以布尔值出现 |
+| `POST /api/profiles` | 新建 / 更新档案（对话框保存时标记为当前） |
+| `POST /api/profiles/apply` | 把某个档案套用到当前 Provider |
+| `DELETE /api/profiles/<name>` | 删除档案 |
 
 `/docs` 和 `/openapi.json` 是 FastAPI 自带的；请求体是 Pydantic 模型，所有错误统一成 `{"error": "..."}`，也就是页面已经在用的结构。
 
@@ -173,6 +177,8 @@ CREATE UNIQUE INDEX ux_messages_session_seq ON messages(session_id, seq);
 审批就是一个 future：turn 在 `ApprovalRegistry.wait()` 上等待，`POST /api/approval` 来兑现——同一个事件循环，不需要锁。`always` 按工具名记住，仅在本次进程内有效，重启就恢复了终端的谨慎。
 
 **页面上改 Provider 设置。** 齿轮对话框编辑 `base_url`、模型、key 和 temperature。预设会填入已知端点；内部网关（opencode go 这类）就是一个带标签的自定义槽位——任意 OpenAI 兼容地址都行。**同步模型**向网关请求模型列表，挑选代替手打名字，并且接受未保存的表单值，因此首次配置就是一条流：贴 URL + key → 同步 → 挑选 → 保存。保存写入 `~/.steward/settings.toml`——`config.load()` 会把它叠在 `config.toml` 之上的覆盖文件——而不是重写你带注释的配置文件。key 在 HTTP 上是只写的：`GET /api/provider` 只返回 `api_key_set` 布尔值，POST 空 key 表示保持不变。`STEWARD_*` 环境变量设置的字段永远不可能被文件顶掉，所以服务端拒绝这类修改，对话框里也会把输入框锁住。
+
+**档案。** 同一个覆盖文件还存命名的 Provider 档案（`[profiles.<名字>]`，`config.load()` 会忽略它们）。Provider 页签把档案和当前生效的配置一起列出；`apply` 把档案复制进当前 Provider——缺省字段保持现值、环境锁定的字段拒绝来自文件——删除当前档案只会清掉标记，不会动配置。没有 key 的档案复用当前生效的 key，因此一个 key 可以服务多个端点。
 
 页面源码在 `web/`（React 18、Vite、Tailwind、shadcn/ui），构建进 `steward/web/static/`。构建产物已提交，所以运行时不需要 Node 工具链。
 

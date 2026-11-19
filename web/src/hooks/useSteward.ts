@@ -3,6 +3,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import {
   api,
   type PermissionMode,
+  type Profiles,
   type ProviderSettings,
   type ProviderUpdate,
   type SessionRow,
@@ -26,6 +27,7 @@ function describeError(error: unknown): string {
 export function useSteward() {
   const [status, setStatus] = useState<Status | null>(null)
   const [provider, setProvider] = useState<ProviderSettings | null>(null)
+  const [profiles, setProfiles] = useState<Profiles>({ active: null, profiles: [] })
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [session, setSessionState] = useState<string | null>(null)
   const [blocks, dispatch] = useReducer(reducer, [] as Block[])
@@ -73,6 +75,14 @@ export function useSteward() {
       setNote(`刷新记录失败：${describeError(error)}`)
     }
   }, [loadTranscript])
+
+  const refreshProfiles = useCallback(async () => {
+    try {
+      setProfiles(await api.profiles())
+    } catch {
+      setProfiles({ active: null, profiles: [] })
+    }
+  }, [])
 
   const handleEvent = useCallback(
     (event: StreamEvent) => {
@@ -125,9 +135,10 @@ export function useSteward() {
       // The page is served from disk on every request, so it can be newer than
       // the process behind it. Fetching these independently keeps a missing
       // /api/provider from taking down the rest of the page.
-      const [statusResult, providerResult] = await Promise.allSettled([
+      const [statusResult, providerResult, profilesResult] = await Promise.allSettled([
         api.status(),
         api.provider(),
+        api.profiles(),
       ])
       if (cancelled) return
 
@@ -145,6 +156,10 @@ export function useSteward() {
         setProvider(providerResult.value)
       } else if (statusResult.status === 'fulfilled') {
         setNote('后端还没有 /api/provider（进程是旧版本），重启 steward web 后即可配置')
+      }
+
+      if (profilesResult.status === 'fulfilled') {
+        setProfiles(profilesResult.value)
       }
 
       if (!cancelled) await refreshSessions()
@@ -255,9 +270,37 @@ export function useSteward() {
     [],
   )
 
+  const saveProfile = useCallback(
+    async (name: string, update: ProviderUpdate) => {
+      const result = await api.saveProfile(name, update)
+      setProfiles(result)
+      return result
+    },
+    [],
+  )
+
+  const applyProfile = useCallback(
+    async (name: string) => {
+      const settings = await api.applyProfile(name)
+      setProvider(settings)
+      void refreshProfiles()
+      setNote(`已切换到档案 ${name}，下一次模型调用生效`)
+      return settings
+    },
+    [refreshProfiles],
+  )
+
+  const deleteProfile = useCallback(
+    async (name: string) => {
+      setProfiles(await api.deleteProfile(name))
+    },
+    [],
+  )
+
   return {
     status,
     provider,
+    profiles,
     sessions,
     session,
     blocks,
@@ -273,6 +316,9 @@ export function useSteward() {
     saveProvider,
     testProvider,
     syncModels,
+    saveProfile,
+    applyProfile,
+    deleteProfile,
   }
 }
 

@@ -26,7 +26,16 @@ import json
 import httpx
 
 from steward import __version__
-from steward.config import PERMISSION_MODES, Config, save_overlay
+from steward.config import (
+    PERMISSION_MODES,
+    PROFILE_NAME,
+    Config,
+    delete_profile,
+    read_overlay,
+    save_overlay,
+    save_profile,
+    set_active_profile,
+)
 from steward.core.runner import Runner
 from steward.providers.base import Provider, ProviderError
 from steward.providers.openai_compat import stream_chat
@@ -50,6 +59,47 @@ class Busy(RuntimeError):
 
 class UnknownSession(LookupError):
     """No stored messages for this session id."""
+
+
+def validate_provider_fields(
+    updates: dict, env_overrides: list[str] | None = None
+) -> dict:
+    """One place that decides what a provider edit may contain.
+
+    `env_overrides` are fields the STEWARD_* environment pinned; a file can
+    never win over them, so editing one is an explicit error.
+    """
+    clean: dict = {}
+    for name in PROVIDER_FIELDS:
+        if name not in updates or updates[name] is None:
+            continue
+        if env_overrides and name in env_overrides:
+            raise ValueError(
+                f"{name} is set by STEWARD_* environment and cannot be changed here"
+            )
+        value = updates[name]
+        if name == "api_key":
+            clean[name] = str(value)
+        elif name == "base_url":
+            text = str(value).strip()
+            if not text:
+                continue  # treated as "keep"
+            if not text.startswith(("http://", "https://")):
+                raise ValueError("base_url must start with http:// or https://")
+            clean[name] = text.rstrip("/")
+        elif name == "model":
+            text = str(value).strip()
+            if not text:
+                raise ValueError("model must not be empty")
+            clean[name] = text
+        elif name == "temperature":
+            number = float(value)
+            if not 0.0 <= number <= 2.0:
+                raise ValueError("temperature must be between 0 and 2")
+            clean[name] = number
+        elif name == "stream_usage":
+            clean[name] = bool(value)
+    return clean
 
 
 class WebService:
@@ -158,35 +208,9 @@ class WebService:
 
     def set_provider(self, updates: dict) -> dict:
         """Validate, apply, and persist page edits. Empty `api_key` means keep."""
-        clean: dict = {}
-        for name in PROVIDER_FIELDS:
-            if name not in updates or updates[name] is None:
-                continue
-            if name in self.config.env_overrides:
-                raise ValueError(f"{name} is set by STEWARD_* environment and cannot be changed here")
-            value = updates[name]
-            if name == "api_key":
-                if value == "":
-                    continue  # "keep the current key"
-                clean[name] = str(value)
-            elif name == "base_url":
-                text = str(value).strip()
-                if not text.startswith(("http://", "https://")):
-                    raise ValueError("base_url must start with http:// or https://")
-                clean[name] = text.rstrip("/")
-            elif name == "model":
-                text = str(value).strip()
-                if not text:
-                    raise ValueError("model must not be empty")
-                clean[name] = text
-            elif name == "temperature":
-                number = float(value)
-                if not 0.0 <= number <= 2.0:
-                    raise ValueError("temperature must be between 0 and 2")
-                clean[name] = number
-            elif name == "stream_usage":
-                clean[name] = bool(value)
-
+        clean = validate_provider_fields(updates, env_overrides=self.config.env_overrides)
+        if clean.get("api_key") == "":
+            clean.pop("api_key")  # "keep the current key"
         for name, value in clean.items():
             setattr(self.config, name, value)
         if clean:
@@ -195,6 +219,81 @@ class WebService:
         payload = {"type": "provider", **self.provider_settings()}
         self.events.publish(payload)
         return self.provider_settings()
+
+    # -- provider profiles ----------------------------------------------
+
+    def profiles(self) -> dict:
+        """Named provider sets saved in the overlay. Keys are never listed."""
+        section = read_overlay(self.config).get("profiles")
+        rows: list[dict] = []
+        active = None
+        if isinstance(section, dict):
+            active = section.get("active")
+            for name, values in section.items():
+                if name == "active" or not isinstance(values, dict):
+                    continue
+                rows.append(
+                    {
+                        "name": name,
+                        "base_url": str(values.get("base_url") or ""),
+                        "model": str(values.get("model") or ""),
+                        "api_key_set": bool(values.get("api_key")),
+                        "temperature": values.get("temperature"),
+                        "stream_usage": values.get("stream_usage"),
+                    }
+                )
+        rows.sort(key=lambda row: row["name"])
+        return {"active": active, "profiles": rows}
+
+    def save_profile(self, name: str, updates: dict, mark_active: bool = False) -> dict:
+        """Upsert a profile. Empty `api_key` keeps the one already in it.
+
+        `mark_active` is what the settings dialog uses: it applies the same
+        values to the active provider, so the profile it files them under is
+        by definition the one in effect.
+        """
+        name = name.strip()
+        if not PROFILE_NAME.fullmatch(name):
+            raise ValueError("profile name: letters, digits, - or _ (max 32)")
+        existing = read_overlay(self.config).get("profiles") or {}
+        existing = existing.get(name) if isinstance(existing, dict) else {}
+
+        clean = validate_provider_fields(updates)
+        if clean.get("api_key") == "":
+            clean.pop("api_key")  # "keep the profile's current key"
+        merged = {k: v for k, v in {**dict(existing or {}), **clean}.items() if v is not None}
+        save_profile(self.config, name, merged)
+        if mark_active:
+            set_active_profile(self.config, name)
+        return self.profiles()
+
+    def apply_profile(self, name: str) -> dict:
+        """Copy a profile into the active provider. Absent fields keep theirs."""
+        profiles = read_overlay(self.config).get("profiles")
+        profile = profiles.get(name) if isinstance(profiles, dict) else None
+        if not isinstance(profile, dict):
+            raise KeyError(name)
+
+        clean = validate_provider_fields(profile)
+        clean = {
+            key: value
+            for key, value in clean.items()
+            if key not in self.config.env_overrides  # env beats any file
+        }
+        for key, value in clean.items():
+            setattr(self.config, key, value)
+        if clean:
+            save_overlay(self.config, "provider", clean)
+        set_active_profile(self.config, name)
+
+        payload = {"type": "provider", **self.provider_settings()}
+        self.events.publish(payload)
+        return self.provider_settings()
+
+    def delete_profile(self, name: str) -> dict:
+        if not delete_profile(self.config, name):
+            raise KeyError(name)
+        return self.profiles()
 
     async def probe_provider(self) -> dict:
         """One tiny real request, so a saved key is verified, not assumed."""
