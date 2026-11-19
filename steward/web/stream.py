@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from steward.core.events import (
     Notice,
@@ -32,7 +33,7 @@ from steward.core.events import (
 DEFAULT_CAPACITY = 4_000
 
 
-def encode(event: object) -> dict:
+def encode(event: object) -> dict[str, Any]:
     """Turn one typed agent event into a JSON-ready payload.
 
     The `type` strings are the wire contract; the page switches on them.
@@ -69,17 +70,17 @@ def encode(event: object) -> dict:
 class Batch:
     """What a subscriber misses between its cursor and now."""
 
-    events: list[dict] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
     lost: bool = False
 
 
 class EventLog:
     def __init__(self, capacity: int = DEFAULT_CAPACITY) -> None:
-        self._items: deque[dict] = deque(maxlen=capacity)
+        self._items: deque[dict[str, Any]] = deque(maxlen=capacity)
         self._lock = threading.Lock()
         self._seq = 0
 
-    def publish(self, payload: dict) -> int:
+    def publish(self, payload: dict[str, Any]) -> int:
         """Append one payload and return its sequence number."""
         with self._lock:
             self._seq += 1
@@ -90,11 +91,11 @@ class EventLog:
         with self._lock:
             if not self._items:
                 return Batch()
-            oldest = self._items[0]["seq"]
+            oldest = int(self._items[0]["seq"])
             lost = cursor > 0 and cursor + 1 < oldest
             return Batch([item for item in self._items if item["seq"] > cursor], lost)
 
-    def tail(self, count: int = 100) -> list[dict]:
+    def tail(self, count: int = 100) -> list[dict[str, Any]]:
         with self._lock:
             return list(self._items)[-count:]
 

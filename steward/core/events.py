@@ -8,6 +8,7 @@ the runner never knows how output is rendered.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, TypeAlias
 
 
 @dataclass
@@ -23,7 +24,7 @@ class ReasoningDelta:
 @dataclass
 class ToolCallEvent:
     name: str
-    args: dict
+    args: dict[str, Any]
 
 
 @dataclass
@@ -42,9 +43,9 @@ class Notice:
 class TurnDone:
     text: str
     steps: int
-    usage: dict = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
 
 
-AgentEvent = (
+AgentEvent: TypeAlias = (
     TextDelta | ReasoningDelta | ToolCallEvent | ToolResultEvent | Notice | TurnDone
 )

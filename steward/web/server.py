@@ -61,9 +61,13 @@ def serve(
         ) from exc
 
     url = url_for(host, port)
+
+    def open_page() -> None:
+        webbrowser.open(url)
+
     app = create_app(
         config,
-        on_ready=(lambda: webbrowser.open(url)) if open_browser else None,
+        on_ready=open_page if open_browser else None,
     )
     uvicorn.run(
         app,

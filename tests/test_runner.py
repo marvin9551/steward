@@ -2,22 +2,31 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from steward.config import Config
-from steward.core.events import Notice, ToolCallEvent, ToolResultEvent, TurnDone
+from steward.core.events import AgentEvent, Notice, ToolCallEvent, ToolResultEvent, TurnDone
 from steward.core.runner import Runner
-from steward.providers.base import ProviderResult
+from steward.providers.base import Provider, ProviderResult, TextCallback
 from steward.session.store import SessionStore
 
 
 class FakeProvider:
     """Scripted provider: returns one prepared result per model call."""
 
-    def __init__(self, results):
+    def __init__(self, results: list[ProviderResult]) -> None:
         self.results = list(results)
-        self.calls = []
+        self.calls: list[list[dict[str, Any]]] = []
 
-    async def __call__(self, config, messages, tools, *, on_text=None, on_reasoning=None):
+    async def __call__(
+        self,
+        config: Any,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        on_text: TextCallback = None,
+        on_reasoning: TextCallback = None,
+    ) -> ProviderResult:
         self.calls.append(messages)
         result = self.results.pop(0)
         if on_text and result.text:
@@ -25,7 +34,7 @@ class FakeProvider:
         return result
 
 
-def tool_call(name: str, args: dict, call_id: str = "call_1") -> ProviderResult:
+def tool_call(name: str, args: dict[str, Any], call_id: str = "call_1") -> ProviderResult:
     return ProviderResult(tool_calls=[{
         "id": call_id,
         "name": name,
@@ -34,7 +43,7 @@ def tool_call(name: str, args: dict, call_id: str = "call_1") -> ProviderResult:
 
 
 class RunnerTestCase(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.config = Config(
@@ -50,18 +59,22 @@ class RunnerTestCase(unittest.IsolatedAsyncioTestCase):
         self.store = SessionStore(self.config.db_path)
         self.session_id = "test-session"
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.store.close()
         self._tmp.cleanup()
 
-    def make_runner(self, provider, **kwargs):
-        events = []
+    def make_runner(
+        self,
+        provider: Provider,
+        **kwargs: Any,
+    ) -> tuple[Runner, list[AgentEvent]]:
+        events: list[AgentEvent] = []
         runner = Runner(self.config, self.store, on_event=events.append, provider=provider, **kwargs)
         return runner, events
 
 
 class TestRunnerLoop(RunnerTestCase):
-    async def test_executes_a_tool_then_answers(self):
+    async def test_executes_a_tool_then_answers(self) -> None:
         provider = FakeProvider([
             tool_call("write_file", {"path": "a.txt", "content": "hi"}),
             ProviderResult(text="done", usage={"prompt_tokens": 5, "completion_tokens": 2}),
@@ -82,7 +95,7 @@ class TestRunnerLoop(RunnerTestCase):
         self.assertEqual(done.steps, 2)
         self.assertEqual(done.usage["prompt_tokens"], 5)
 
-    async def test_tool_result_is_replayed_to_the_model(self):
+    async def test_tool_result_is_replayed_to_the_model(self) -> None:
         provider = FakeProvider([
             tool_call("write_file", {"path": "a.txt", "content": "hi"}),
             ProviderResult(text="done"),
@@ -98,7 +111,7 @@ class TestRunnerLoop(RunnerTestCase):
         assistant = [m for m in second_call if m["role"] == "assistant"][0]
         self.assertEqual(assistant["tool_calls"][0]["function"]["name"], "write_file")
 
-    async def test_read_only_mode_denies_writes(self):
+    async def test_read_only_mode_denies_writes(self) -> None:
         self.config.permission = "read-only"
         provider = FakeProvider([
             tool_call("write_file", {"path": "a.txt", "content": "hi"}),
@@ -112,15 +125,15 @@ class TestRunnerLoop(RunnerTestCase):
         tool = [m for m in self.store.messages(self.session_id) if m["role"] == "tool"][0]
         self.assertIn("denied", tool["content"])
 
-    async def test_approval_denial_blocks_the_tool(self):
+    async def test_approval_denial_blocks_the_tool(self) -> None:
         self.config.auto_approve = False
         provider = FakeProvider([
             tool_call("run_shell", {"command": "touch blocked.txt"}),
             ProviderResult(text="ok"),
         ])
-        calls = []
+        calls: list[tuple[str, dict[str, Any]]] = []
 
-        async def deny(name, args):
+        async def deny(name: str, args: dict[str, Any]) -> bool:
             calls.append((name, args))
             return False
 
@@ -132,7 +145,7 @@ class TestRunnerLoop(RunnerTestCase):
         tool = [m for m in self.store.messages(self.session_id) if m["role"] == "tool"][0]
         self.assertIn("denied", tool["content"])
 
-    async def test_invalid_json_arguments_become_a_tool_error(self):
+    async def test_invalid_json_arguments_become_a_tool_error(self) -> None:
         provider = FakeProvider([
             ProviderResult(tool_calls=[{
                 "id": "call_bad",
@@ -147,16 +160,16 @@ class TestRunnerLoop(RunnerTestCase):
         tool = [m for m in self.store.messages(self.session_id) if m["role"] == "tool"][0]
         self.assertIn("not valid JSON", tool["content"])
 
-    async def test_ask_before_write_mode_gates_file_writes(self):
+    async def test_ask_before_write_mode_gates_file_writes(self) -> None:
         self.config.permission = "ask-before-write"
         self.config.auto_approve = False
         provider = FakeProvider([
             tool_call("write_file", {"path": "a.txt", "content": "hi"}),
             ProviderResult(text="done"),
         ])
-        decisions = []
+        decisions: list[tuple[str, dict[str, Any]]] = []
 
-        async def deny(name, args):
+        async def deny(name: str, args: dict[str, Any]) -> bool:
             decisions.append((name, args))
             return False
 
@@ -168,7 +181,7 @@ class TestRunnerLoop(RunnerTestCase):
         tool = [m for m in self.store.messages(self.session_id) if m["role"] == "tool"][0]
         self.assertIn("denied", tool["content"])
 
-    async def test_step_budget_stops_runaway_tool_calls(self):
+    async def test_step_budget_stops_runaway_tool_calls(self) -> None:
         self.config.max_steps = 2
         provider = FakeProvider([
             tool_call("list_dir", {}),

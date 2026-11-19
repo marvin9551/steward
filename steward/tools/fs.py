@@ -15,7 +15,7 @@ MAX_READ_LINES = 400
 
 
 def _resolve(ctx: ToolContext, raw: str, *, write: bool) -> Path:
-    if not raw or not isinstance(raw, str):
+    if not raw:
         raise ValueError("path must be a non-empty string")
     candidate = Path(raw).expanduser()
     if not candidate.is_absolute():
@@ -135,7 +135,7 @@ def list_dir(ctx: ToolContext, path: str = ".") -> str:
     entries = sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
     if not entries:
         return "(empty directory)"
-    lines = []
+    lines: list[str] = []
     for entry in entries[:500]:
         suffix = "/" if entry.is_dir() else ""
         size = "" if entry.is_dir() else f"  {entry.stat().st_size} B"

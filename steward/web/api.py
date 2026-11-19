@@ -14,11 +14,12 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +27,7 @@ from pydantic import BaseModel
 
 from steward import __version__
 from steward.config import Config
+from steward.providers.base import Provider
 from steward.web.service import Busy, UnknownSession, WebService
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -97,13 +99,13 @@ ServiceDep = Depends(get_service)
 
 def create_app(
     config: Config,
-    provider=None,
+    provider: Provider | None = None,
     on_ready: Callable[[], None] | None = None,
 ) -> FastAPI:
     """Build the app. `provider` is the test seam; `on_ready` opens the browser."""
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.service = WebService(config, provider=provider)
         if on_ready is not None:
             on_ready()
@@ -115,12 +117,12 @@ def create_app(
     app = FastAPI(title="steward", version=__version__, lifespan=lifespan)
 
     @app.exception_handler(HTTPException)
-    async def http_error(request: Request, exc: HTTPException):
+    async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
         return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code)
 
     @app.exception_handler(RequestValidationError)
-    async def invalid_body(request: Request, exc: RequestValidationError):
-        first = exc.errors()[0] if exc.errors() else {}
+    async def invalid_body(request: Request, exc: RequestValidationError) -> JSONResponse:
+        first: dict[str, Any] = exc.errors()[0] if exc.errors() else {}
         where = ".".join(str(part) for part in first.get("loc", ())[1:]) or "body"
         return JSONResponse(
             {"error": f"invalid {where}: {first.get('msg', 'bad request')}"},
@@ -130,15 +132,15 @@ def create_app(
     # -- reads ----------------------------------------------------------
 
     @app.get("/api/status")
-    async def status(service: WebService = ServiceDep) -> dict:
+    async def status(service: WebService = ServiceDep) -> dict[str, Any]:
         return service.status()
 
     @app.get("/api/sessions")
-    async def sessions(service: WebService = ServiceDep) -> dict:
+    async def sessions(service: WebService = ServiceDep) -> dict[str, Any]:
         return {"sessions": service.sessions()}
 
     @app.get("/api/sessions/{session_id}")
-    async def transcript(session_id: str, service: WebService = ServiceDep) -> dict:
+    async def transcript(session_id: str, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             return service.transcript(session_id)
         except UnknownSession:
@@ -147,11 +149,11 @@ def create_app(
     # -- writes ---------------------------------------------------------
 
     @app.post("/api/sessions")
-    async def new_session(service: WebService = ServiceDep) -> dict:
+    async def new_session(service: WebService = ServiceDep) -> dict[str, Any]:
         return {"session_id": service.new_session()}
 
     @app.post("/api/turn")
-    async def turn(body: TurnRequest, service: WebService = ServiceDep) -> dict:
+    async def turn(body: TurnRequest, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             session_id = await service.start_turn(body.session or "", body.text)
         except Busy as exc:
@@ -161,7 +163,7 @@ def create_app(
         return {"session_id": session_id}
 
     @app.post("/api/approval")
-    async def approval(body: ApprovalDecision, service: WebService = ServiceDep) -> dict:
+    async def approval(body: ApprovalDecision, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             resolved = service.resolve_approval(body.id, body.decision)
         except ValueError as exc:
@@ -171,7 +173,7 @@ def create_app(
         return {"resolved": True}
 
     @app.post("/api/permission")
-    async def permission(body: PermissionChange, service: WebService = ServiceDep) -> dict:
+    async def permission(body: PermissionChange, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             return {"permission": service.set_permission(body.mode)}
         except ValueError as exc:
@@ -180,32 +182,32 @@ def create_app(
     # -- provider settings ----------------------------------------------
 
     @app.get("/api/provider")
-    async def get_provider(service: WebService = ServiceDep) -> dict:
+    async def get_provider(service: WebService = ServiceDep) -> dict[str, Any]:
         return service.provider_settings()
 
     @app.post("/api/provider")
-    async def update_provider(body: ProviderUpdate, service: WebService = ServiceDep) -> dict:
+    async def update_provider(body: ProviderUpdate, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             return service.set_provider(body.model_dump())
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
 
     @app.post("/api/provider/test")
-    async def test_provider(service: WebService = ServiceDep) -> dict:
+    async def test_provider(service: WebService = ServiceDep) -> dict[str, Any]:
         return await service.probe_provider()
 
     @app.post("/api/models")
-    async def models(body: ModelSync, service: WebService = ServiceDep) -> dict:
+    async def models(body: ModelSync, service: WebService = ServiceDep) -> dict[str, Any]:
         return await service.list_models(body.base_url, body.api_key)
 
     # -- provider profiles ----------------------------------------------
 
     @app.get("/api/profiles")
-    async def get_profiles(service: WebService = ServiceDep) -> dict:
+    async def get_profiles(service: WebService = ServiceDep) -> dict[str, Any]:
         return service.profiles()
 
     @app.post("/api/profiles")
-    async def upsert_profile(body: ProfileSave, service: WebService = ServiceDep) -> dict:
+    async def upsert_profile(body: ProfileSave, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             values = {key: value for key, value in body.model_dump().items() if key != "mark_active"}
             return service.save_profile(body.name, values, mark_active=body.mark_active)
@@ -213,7 +215,7 @@ def create_app(
             raise HTTPException(400, str(exc)) from None
 
     @app.post("/api/profiles/apply")
-    async def apply_profile(body: ProfileApply, service: WebService = ServiceDep) -> dict:
+    async def apply_profile(body: ProfileApply, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             return service.apply_profile(body.name)
         except KeyError:
@@ -222,7 +224,7 @@ def create_app(
             raise HTTPException(400, str(exc)) from None
 
     @app.delete("/api/profiles/{name}")
-    async def remove_profile(name: str, service: WebService = ServiceDep) -> dict:
+    async def remove_profile(name: str, service: WebService = ServiceDep) -> dict[str, Any]:
         try:
             return service.delete_profile(name)
         except KeyError:
@@ -231,7 +233,7 @@ def create_app(
     # -- stream ---------------------------------------------------------
 
     @app.get("/api/stream")
-    async def stream(request: Request, service: WebService = ServiceDep):
+    async def stream(request: Request, service: WebService = ServiceDep) -> StreamingResponse:
         cursor = _cursor(request)
         return StreamingResponse(
             stream_events(service, cursor, stop=request.is_disconnected),
@@ -249,11 +251,11 @@ def create_app(
         app.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
 
     @app.get("/", include_in_schema=False)
-    async def index():
+    async def index() -> Response:
         return _index_response()
 
     @app.get("/{path:path}", include_in_schema=False)
-    async def spa(path: str):
+    async def spa(path: str) -> Response:
         if path.startswith("api/"):
             raise HTTPException(404, f"no route for GET /{path}")
         target = _resolve_static(path)
@@ -269,7 +271,7 @@ def create_app(
         methods=["POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         include_in_schema=False,
     )
-    async def unknown_method(path: str):
+    async def unknown_method(path: str) -> Response:
         raise HTTPException(404, f"no route for /{path}")
 
     return app
@@ -312,7 +314,7 @@ async def stream_events(
             await asyncio.sleep(poll)
 
 
-def _sse(event_id: int | None, payload: dict) -> str:
+def _sse(event_id: int | None, payload: dict[str, Any]) -> str:
     head = f"id: {event_id}\n" if event_id is not None else ""
     return f"{head}data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
@@ -338,7 +340,7 @@ def _resolve_static(path: str) -> Path | None:
     return target
 
 
-def _index_response():
+def _index_response() -> FileResponse | PlainTextResponse:
     if not INDEX.is_file():
         return PlainTextResponse(MISSING_BUILD, status_code=503)
     return FileResponse(INDEX, headers={"Cache-Control": "no-store"})

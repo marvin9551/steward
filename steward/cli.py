@@ -10,16 +10,18 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
+from typing import Any
 
 from steward import __version__
 from steward.config import PERMISSION_MODES, Config, describe, load
 from steward.core.events import (
+    AgentEvent,
     Notice,
     ReasoningDelta,
     TextDelta,
     ToolCallEvent,
     ToolResultEvent,
-    TurnDone,
 )
 from steward.core.runner import Runner
 from steward.providers.base import ProviderError
@@ -41,7 +43,7 @@ class Renderer:
             sys.stdout.write("\n")
             self._at_line_start = True
 
-    def __call__(self, event) -> None:
+    def __call__(self, event: AgentEvent) -> None:
         if isinstance(event, TextDelta):
             sys.stdout.write(event.text)
             sys.stdout.flush()
@@ -62,11 +64,12 @@ class Renderer:
         elif isinstance(event, Notice):
             self.newline()
             print(f"[{event.text}]")
-        elif isinstance(event, TurnDone):
+        else:
+            # The AgentEvent union is exhaustive; what remains is TurnDone.
             self.newline()
 
 
-def _compact(value: dict, limit: int = 220) -> str:
+def _compact(value: dict[str, Any], limit: int = 220) -> str:
     text = json.dumps(value, ensure_ascii=False, default=str)
     return text if len(text) <= limit else text[:limit] + "…"
 
@@ -118,12 +121,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "web":
         return _cmd_web(config, args)
 
-    if getattr(args, "model", None):
-        config.model = args.model
-    if getattr(args, "workspace", None):
-        config.workspace = load_workspace(args.workspace)
-    if getattr(args, "permission", None):
-        config.permission = args.permission
+    model = getattr(args, "model", None)
+    if model:
+        config.model = model
+    workspace = getattr(args, "workspace", None)
+    if workspace:
+        config.workspace = load_workspace(workspace)
+    permission = getattr(args, "permission", None)
+    if permission:
+        config.permission = permission
     if getattr(args, "yes", False):
         config.auto_approve = True
     if getattr(args, "reasoning", False):
@@ -136,15 +142,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
 
-def load_workspace(value: str):
-    from pathlib import Path
-
+def load_workspace(value: str) -> Path:
     path = Path(value).expanduser().resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-async def _chat(config: Config, args) -> int:
+async def _chat(config: Config, args: argparse.Namespace) -> int:
     store = SessionStore(config.db_path)
     if getattr(args, "new", False):
         session_id = SessionStore.new_session_id()
@@ -200,7 +204,7 @@ async def _chat(config: Config, args) -> int:
     return 0
 
 
-async def _approve(name: str, args: dict) -> bool:
+async def _approve(name: str, args: dict[str, Any]) -> bool:
     summary = _compact(args, 240)
     answer = await asyncio.to_thread(
         input, f"\n  approve {name} {summary}? [y/N] "
@@ -215,7 +219,7 @@ def _cmd_sessions(config: Config) -> int:
     return 0
 
 
-def _cmd_web(config: Config, args) -> int:
+def _cmd_web(config: Config, args: argparse.Namespace) -> int:
     from steward.web.server import WebUnavailable, find_port, serve, url_for
 
     try:
@@ -229,7 +233,7 @@ def _cmd_web(config: Config, args) -> int:
     print(f"  web {url_for(args.host, port)}    (ctrl-c to stop)\n")
 
     try:
-        serve(config, args.host, port, quiet=args.quiet, open_browser=not args.no_open)
+        _ = serve(config, args.host, port, quiet=args.quiet, open_browser=not args.no_open)
     except WebUnavailable as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -274,8 +278,9 @@ def _cmd_history(config: Config, session_id: str) -> int:
         role = message["role"]
         content = str(message.get("content") or "").strip()
         print(f"\n[{role}] {content[:500]}")
-        for call in message.get("tool_calls") or []:
-            function = call.get("function") or {}
+        tool_calls: list[dict[str, Any]] = message.get("tool_calls") or []
+        for call in tool_calls:
+            function: dict[str, Any] = call.get("function") or {}
             print(f"  -> {function.get('name')}({function.get('arguments')})")
     store.close()
     return 0

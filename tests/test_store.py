@@ -15,7 +15,7 @@ class TestSessionStore(unittest.TestCase):
         self.store.close()
         self._tmp.cleanup()
 
-    def test_messages_come_back_in_order_with_their_shape(self):
+    def test_messages_come_back_in_order_with_their_shape(self) -> None:
         self.store.append("s1", "user", {"content": "hello"})
         self.store.append("s1", "assistant", {"content": "", "tool_calls": [{"id": "c1"}]})
         self.store.append("s1", "tool", {"tool_call_id": "c1", "content": "output"})
@@ -26,7 +26,7 @@ class TestSessionStore(unittest.TestCase):
         self.assertEqual(messages[2]["tool_call_id"], "c1")
         self.assertEqual(messages[1]["tool_calls"][0]["id"], "c1")
 
-    def test_sessions_are_listed_newest_first(self):
+    def test_sessions_are_listed_newest_first(self) -> None:
         self.store.append("older", "user", {"content": "one"})
         self.store.append("newer", "user", {"content": "two"})
 
@@ -35,7 +35,7 @@ class TestSessionStore(unittest.TestCase):
         self.assertEqual(listed, ["newer", "older"])
         self.assertEqual(self.store.latest_session(), "newer")
 
-    def test_reads_are_safe_while_a_turn_writes(self):
+    def test_reads_are_safe_while_a_turn_writes(self) -> None:
         """The web UI lists sessions and fetches transcripts during a turn."""
         stop = threading.Event()
         errors: list[BaseException] = []

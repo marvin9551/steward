@@ -17,8 +17,8 @@ TextCallback = Callable[[str], None] | None
 class ProviderResult:
     text: str = ""
     reasoning: str = ""
-    tool_calls: list[dict] = field(default_factory=list)
-    usage: dict = field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    usage: dict[str, Any] = field(default_factory=dict)
 
 
 class ProviderError(RuntimeError):
@@ -29,8 +29,8 @@ class Provider(Protocol):
     async def __call__(
         self,
         config: Any,
-        messages: list[dict],
-        tools: list[dict],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         *,
         on_text: TextCallback = None,
         on_reasoning: TextCallback = None,

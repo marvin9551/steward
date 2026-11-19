@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from steward.config import Config, load, read_overlay, save_overlay, save_profile, set_active_profile
 from steward.config import delete_profile as delete_stored_profile
@@ -9,11 +10,11 @@ from steward.policy.permissions import ALLOW, ASK, DENY, decide
 
 
 class TestConfig(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self._tmp.cleanup()
         for name in (
             "STEWARD_API_KEY",
@@ -23,7 +24,7 @@ class TestConfig(unittest.TestCase):
         ):
             os.environ.pop(name, None)
 
-    def test_toml_values_and_env_override(self):
+    def test_toml_values_and_env_override(self) -> None:
         (self.tmp / "config.toml").write_text(
             f"""
 [provider]
@@ -50,7 +51,7 @@ max_steps = 7
         self.assertTrue(config.workspace.is_dir())
         self.assertTrue(config.data_dir.is_dir())
 
-    def test_unknown_permission_is_rejected(self):
+    def test_unknown_permission_is_rejected(self) -> None:
         (self.tmp / "config.toml").write_text(
             f"""
 [agent]
@@ -63,7 +64,7 @@ permission = "yolo"
         with self.assertRaises(ValueError):
             load(self.tmp / "config.toml")
 
-    def test_page_overlay_applies_and_env_still_wins(self):
+    def test_page_overlay_applies_and_env_still_wins(self) -> None:
         data = self.tmp / "data"
         data.mkdir()
         save_overlay(Config(data_dir=data), "provider", {
@@ -84,7 +85,7 @@ permission = "yolo"
         self.assertEqual(config.model, "env-model")
         self.assertEqual(config.api_key, "overlay-key")
 
-    def test_profiles_round_trip_and_stay_out_of_the_active_config(self):
+    def test_profiles_round_trip_and_stay_out_of_the_active_config(self) -> None:
         data = self.tmp / "data"
         data.mkdir()
         config = Config(data_dir=data)
@@ -97,7 +98,7 @@ permission = "yolo"
                                              "model": "glm-5.3"})
         set_active_profile(config, "opencode-go")
 
-        overlay = read_overlay(config)
+        overlay: dict[str, Any] = read_overlay(config)
         self.assertEqual(overlay["profiles"]["deepseek"]["model"], "deepseek-chat")
         self.assertEqual(overlay["profiles"]["active"], "opencode-go")
 
@@ -108,9 +109,10 @@ permission = "yolo"
 
         self.assertTrue(delete_stored_profile(config, "opencode-go"))
         self.assertFalse(delete_stored_profile(config, "opencode-go"))
-        self.assertIsNone(read_overlay(config)["profiles"].get("active"))
+        overlay = read_overlay(config)
+        self.assertIsNone(overlay["profiles"].get("active"))
 
-    def test_save_overlay_merges_and_can_drop_a_key(self):
+    def test_save_overlay_merges_and_can_drop_a_key(self) -> None:
         data = self.tmp / "data"
         data.mkdir()
         config = Config(data_dir=data)
@@ -126,23 +128,24 @@ permission = "yolo"
 
 
 class TestPermissionTable(unittest.TestCase):
-    def test_read_only(self):
+    def test_read_only(self) -> None:
         self.assertEqual(decide("read-only", "read_file"), ALLOW)
         self.assertEqual(decide("read-only", "write_file"), DENY)
         self.assertEqual(decide("read-only", "run_shell"), DENY)
 
-    def test_ask_before_write_asks_for_every_mutation(self):
+    def test_ask_before_write_is_a_deprecated_alias(self) -> None:
         self.assertEqual(decide("ask-before-write", "read_file"), ALLOW)
-        self.assertEqual(decide("ask-before-write", "list_dir"), ALLOW)
         self.assertEqual(decide("ask-before-write", "write_file"), ASK)
-        self.assertEqual(decide("ask-before-write", "edit_file"), ASK)
         self.assertEqual(decide("ask-before-write", "run_shell"), ASK)
 
-    def test_workspace_write(self):
-        self.assertEqual(decide("workspace-write", "write_file"), ALLOW)
+    def test_workspace_write_asks_for_every_mutation(self) -> None:
+        self.assertEqual(decide("workspace-write", "read_file"), ALLOW)
+        self.assertEqual(decide("workspace-write", "list_dir"), ALLOW)
+        self.assertEqual(decide("workspace-write", "write_file"), ASK)
+        self.assertEqual(decide("workspace-write", "edit_file"), ASK)
         self.assertEqual(decide("workspace-write", "run_shell"), ASK)
 
-    def test_full(self):
+    def test_full(self) -> None:
         self.assertEqual(decide("full", "run_shell"), ALLOW)
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ def run_shell(ctx: ToolContext, command: str, timeout: int = 60) -> str:
     except subprocess.TimeoutExpired:
         return f"ERROR: command timed out after {timeout}s"
 
-    parts = []
+    parts: list[str] = []
     if completed.stdout:
         parts.append(completed.stdout.rstrip())
     if completed.stderr:

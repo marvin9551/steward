@@ -24,7 +24,7 @@ max_steps = 25
 context_budget = 60000
 # Tool output is cut at this many characters before entering history.
 max_tool_output = 20000
-# read-only | ask-before-write | workspace-write | full
+# read-only | workspace-write | full
 permission = "workspace-write"
 # Skip the approval prompt for shell commands.
 auto_approve = false

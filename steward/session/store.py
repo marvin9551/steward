@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any, cast
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -52,7 +53,7 @@ class SessionStore:
 
     # -- writes ---------------------------------------------------------
 
-    def append(self, session_id: str, role: str, payload: dict) -> int:
+    def append(self, session_id: str, role: str, payload: dict[str, Any]) -> int:
         with self._lock, self._conn:
             row = self._conn.execute(
                 "SELECT COALESCE(MAX(seq), 0) AS seq FROM messages WHERE session_id = ?",
@@ -68,7 +69,7 @@ class SessionStore:
 
     # -- reads ----------------------------------------------------------
 
-    def messages(self, session_id: str) -> list[dict]:
+    def messages(self, session_id: str) -> list[dict[str, Any]]:
         """Return the session as OpenAI-style chat messages."""
         with self._lock:
             rows = self._conn.execute(
@@ -91,7 +92,7 @@ class SessionStore:
             ).fetchone()
         return row is not None
 
-    def sessions(self, limit: int = 20) -> list[dict]:
+    def sessions(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
                 """
@@ -111,7 +112,9 @@ class SessionStore:
                 """,
                 (limit,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        # sqlite3.Row is not typed as a mapping, but dict(row) yields the
+        # column-name -> value mapping the DDL declares.
+        return [cast(dict[str, Any], dict(row)) for row in rows]
 
     def close(self) -> None:
         with self._lock:
@@ -125,7 +128,7 @@ class SessionStore:
         return f"{stamp}-{uuid.uuid4().hex[:4]}"
 
 
-def _to_message(role: str, payload: dict) -> dict:
+def _to_message(role: str, payload: dict[str, Any]) -> dict[str, Any]:
     if role == "assistant":
         message = {"role": "assistant", "content": payload.get("content") or ""}
         if payload.get("tool_calls"):

@@ -23,6 +23,9 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
+
+from steward.policy.permissions import ALIASES
 
 PERMISSION_MODES = ("read-only", "ask-before-write", "workspace-write", "full")
 DEFAULT_CONFIG_FILE = Path("config.toml")
@@ -38,8 +41,8 @@ def _expand(value: str | Path) -> Path:
     return Path(os.path.expandvars(str(value))).expanduser()
 
 
-def _as_dict(value: object) -> dict:
-    return value if isinstance(value, dict) else {}
+def _as_dict(value: object) -> dict[str, Any]:
+    return cast(dict[str, Any], value) if isinstance(value, dict) else {}
 
 
 @dataclass
@@ -69,13 +72,12 @@ class Config:
     def db_path(self) -> Path:
         return self.data_dir / "steward.db"
 
-    def prepare(self) -> "Config":
+    def prepare(self) -> Config:
         """Create the data/workspace directories and validate the mode."""
         # "ask-before-write" is the deprecated spelling of workspace-write:
         # the old mode had the same decision table, so old settings keep
         # loading under the merged name.
-        if self.permission == "ask-before-write":
-            self.permission = "workspace-write"
+        self.permission = ALIASES.get(self.permission, self.permission)
         if self.permission not in PERMISSION_MODES:
             raise ValueError(
                 f"permission must be one of {PERMISSION_MODES}, got {self.permission!r}"
@@ -85,7 +87,7 @@ class Config:
         return self
 
 
-def _coerce(name: str, value: object, current: object) -> object:
+def _coerce(_name: str, value: Any, current: object) -> object:
     """Convert a TOML/env value to the dataclass field's type."""
     if isinstance(current, bool):
         return bool(value)
@@ -108,7 +110,7 @@ def load(path: str | Path | None = None) -> Config:
     cfg = Config()
     config_path = Path(path).expanduser() if path else DEFAULT_CONFIG_FILE
 
-    raw: dict = {}
+    raw: dict[str, Any] = {}
     if config_path.exists():
         with config_path.open("rb") as handle:
             raw = tomllib.load(handle)
@@ -153,7 +155,7 @@ def load(path: str | Path | None = None) -> Config:
     return cfg.prepare()
 
 
-def read_overlay(config: Config) -> dict:
+def read_overlay(config: Config) -> dict[str, Any]:
     """The page-managed overlay, or {} if none exists yet."""
     path = config.data_dir / OVERLAY_FILE
     if not path.is_file():
@@ -162,7 +164,7 @@ def read_overlay(config: Config) -> dict:
         return tomllib.load(handle)
 
 
-def write_overlay(config: Config, data: dict) -> Path:
+def write_overlay(config: Config, data: dict[str, Any]) -> Path:
     """Serialize the overlay. Two levels of nesting: `[profiles]` holds the
     active marker, `[profiles.<name>]` holds one profile each."""
     lines = [OVERLAY_HEADER.rstrip(), ""]
@@ -170,16 +172,18 @@ def write_overlay(config: Config, data: dict) -> Path:
         if not isinstance(values, dict):
             lines.append(f"{name} = {_toml_value(values)}")
             continue
-        scalars = {k: v for k, v in values.items() if not isinstance(v, dict)}
-        if scalars or not values:
+        section = cast(dict[str, Any], values)
+        scalars = {k: v for k, v in section.items() if not isinstance(v, dict)}
+        if scalars or not section:
             lines.append(f"[{name}]")
             for key, value in scalars.items():
                 lines.append(f"{key} = {_toml_value(value)}")
             lines.append("")
-        for key, nested in values.items():
+        for key, nested in section.items():
             if isinstance(nested, dict):
+                nested_map = cast(dict[str, Any], nested)
                 lines.append(f"[{name}.{key}]")
-                for sub_key, value in nested.items():
+                for sub_key, value in nested_map.items():
                     lines.append(f"{sub_key} = {_toml_value(value)}")
                 lines.append("")
     path = config.data_dir / OVERLAY_FILE
@@ -187,7 +191,7 @@ def write_overlay(config: Config, data: dict) -> Path:
     return path
 
 
-def save_overlay(config: Config, section: str, updates: dict) -> Path:
+def save_overlay(config: Config, section: str, updates: dict[str, Any]) -> Path:
     """Persist page edits to `<data_dir>/settings.toml`, merging what is there.
 
     Writing the overlay instead of `config.toml` is the point: your commented
@@ -208,7 +212,7 @@ def save_overlay(config: Config, section: str, updates: dict) -> Path:
     return write_overlay(config, data)
 
 
-def save_profile(config: Config, name: str, values: dict) -> Path:
+def save_profile(config: Config, name: str, values: dict[str, Any]) -> Path:
     """Upsert one provider profile under `[profiles.<name>]`."""
     profiles = dict(_as_dict(read_overlay(config).get("profiles")))
     profiles[name] = dict(_as_dict(profiles.get(name))) | dict(values)

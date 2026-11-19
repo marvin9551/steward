@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 import httpx
 
@@ -36,8 +38,10 @@ from steward.config import (
     save_profile,
     set_active_profile,
 )
+from steward.core.events import AgentEvent
 from steward.core.runner import Runner
-from steward.providers.base import Provider, ProviderError
+from steward.policy.permissions import ALIASES
+from steward.providers.base import Provider, ProviderError, ProviderResult
 from steward.providers.openai_compat import stream_chat
 from steward.session.store import SessionStore
 from steward.web.approvals import (
@@ -52,6 +56,11 @@ APPROVAL_TIMEOUT = 900.0
 PROVIDER_FIELDS = ("base_url", "model", "api_key", "temperature", "stream_usage")
 MODELS_TIMEOUT = 15.0
 
+# A probe is the provider seam used by `/api/provider/test`: one chat call.
+ProbeFn = Callable[[Config, list[dict[str, Any]], list[dict[str, Any]]], Awaitable[ProviderResult]]
+# The seam that turns `GET {base_url}/models` into model ids; tests swap it.
+FetchModelsFn = Callable[[str, str], Awaitable[list[str]]]
+
 
 class Busy(RuntimeError):
     """A turn is already running."""
@@ -62,14 +71,14 @@ class UnknownSession(LookupError):
 
 
 def validate_provider_fields(
-    updates: dict, env_overrides: list[str] | None = None
-) -> dict:
+    updates: dict[str, Any], env_overrides: list[str] | None = None
+) -> dict[str, Any]:
     """One place that decides what a provider edit may contain.
 
     `env_overrides` are fields the STEWARD_* environment pinned; a file can
     never win over them, so editing one is an explicit error.
     """
-    clean: dict = {}
+    clean: dict[str, Any] = {}
     for name in PROVIDER_FIELDS:
         if name not in updates or updates[name] is None:
             continue
@@ -103,15 +112,20 @@ def validate_provider_fields(
 
 
 class WebService:
-    def __init__(self, config: Config, provider: Provider | None = None, probe=None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        provider: Provider | None = None,
+        probe: ProbeFn | None = None,
+    ) -> None:
         self.config = config
         self.events = EventLog()
         self.approvals = ApprovalRegistry()
         self.store = SessionStore(config.db_path)
         self._provider = provider
-        self._probe = probe or stream_chat
-        self._fetch_models = fetch_model_ids
-        self._task: asyncio.Task | None = None
+        self._probe: ProbeFn = probe or stream_chat
+        self._fetch_models: FetchModelsFn = fetch_model_ids
+        self._task: asyncio.Task[None] | None = None
         self._busy_session: str | None = None
         self._always_allow: set[str] = set()
 
@@ -147,7 +161,7 @@ class WebService:
 
     # -- reads ----------------------------------------------------------
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         """Everything the page needs to describe itself. Never includes the key."""
         return {
             "version": __version__,
@@ -163,19 +177,19 @@ class WebService:
             "latest_session": self.store.latest_session(),
         }
 
-    def sessions(self, limit: int = 50) -> list[dict]:
-        items = self.store.sessions(limit=limit)
+    def sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = self.store.sessions(limit=limit)
         for item in items:
             item["preview"] = _preview(item.pop("last_payload", None))
         return items
 
-    def transcript(self, session_id: str) -> dict:
+    def transcript(self, session_id: str) -> dict[str, Any]:
         """Stored messages rendered as UI blocks.
 
         The page and the live stream must agree on shape, so a reload after a
         turn looks exactly like having watched it.
         """
-        messages = self.store.messages(session_id)
+        messages: list[dict[str, Any]] = self.store.messages(session_id)
         if not messages:
             raise UnknownSession(session_id)
         return {"session": session_id, "blocks": _blocks(messages)}
@@ -186,6 +200,9 @@ class WebService:
         return SessionStore.new_session_id()
 
     def set_permission(self, mode: str) -> str:
+        # "ask-before-write" is a deprecated alias of "workspace-write"; keep
+        # old callers working by normalizing before the mode is validated.
+        mode = ALIASES.get(mode, mode)
         if mode not in PERMISSION_MODES:
             raise ValueError(f"permission must be one of {PERMISSION_MODES}, got {mode!r}")
         self.config.permission = mode
@@ -194,7 +211,7 @@ class WebService:
 
     # -- provider settings ----------------------------------------------
 
-    def provider_settings(self) -> dict:
+    def provider_settings(self) -> dict[str, Any]:
         """What the settings dialog shows. The key itself never leaves."""
         return {
             "base_url": self.config.base_url,
@@ -206,7 +223,7 @@ class WebService:
             "env_overrides": [name for name in self.config.env_overrides if name in PROVIDER_FIELDS],
         }
 
-    def set_provider(self, updates: dict) -> dict:
+    def set_provider(self, updates: dict[str, Any]) -> dict[str, Any]:
         """Validate, apply, and persist page edits. Empty `api_key` means keep."""
         clean = validate_provider_fields(updates, env_overrides=self.config.env_overrides)
         if clean.get("api_key") == "":
@@ -216,36 +233,38 @@ class WebService:
         if clean:
             save_overlay(self.config, "provider", clean)
 
-        payload = {"type": "provider", **self.provider_settings()}
+        payload: dict[str, Any] = {"type": "provider", **self.provider_settings()}
         self.events.publish(payload)
         return self.provider_settings()
 
     # -- provider profiles ----------------------------------------------
 
-    def profiles(self) -> dict:
+    def profiles(self) -> dict[str, Any]:
         """Named provider sets saved in the overlay. Keys are never listed."""
-        section = read_overlay(self.config).get("profiles")
-        rows: list[dict] = []
-        active = None
+        overlay: dict[str, Any] = read_overlay(self.config)
+        section = cast("dict[str, Any] | None", overlay.get("profiles"))
+        rows: list[dict[str, Any]] = []
+        active: Any = None
         if isinstance(section, dict):
             active = section.get("active")
             for name, values in section.items():
                 if name == "active" or not isinstance(values, dict):
                     continue
+                entry = cast(dict[str, Any], values)
                 rows.append(
                     {
                         "name": name,
-                        "base_url": str(values.get("base_url") or ""),
-                        "model": str(values.get("model") or ""),
-                        "api_key_set": bool(values.get("api_key")),
-                        "temperature": values.get("temperature"),
-                        "stream_usage": values.get("stream_usage"),
+                        "base_url": str(entry.get("base_url") or ""),
+                        "model": str(entry.get("model") or ""),
+                        "api_key_set": bool(entry.get("api_key")),
+                        "temperature": entry.get("temperature"),
+                        "stream_usage": entry.get("stream_usage"),
                     }
                 )
-        rows.sort(key=lambda row: row["name"])
+        rows.sort(key=lambda row: str(row["name"]))
         return {"active": active, "profiles": rows}
 
-    def save_profile(self, name: str, updates: dict, mark_active: bool = False) -> dict:
+    def save_profile(self, name: str, updates: dict[str, Any], mark_active: bool = False) -> dict[str, Any]:
         """Upsert a profile. Empty `api_key` keeps the one already in it.
 
         `mark_active` is what the settings dialog uses: it applies the same
@@ -255,22 +274,28 @@ class WebService:
         name = name.strip()
         if not PROFILE_NAME.fullmatch(name):
             raise ValueError("profile name: letters, digits, - or _ (max 32)")
-        existing = read_overlay(self.config).get("profiles") or {}
-        existing = existing.get(name) if isinstance(existing, dict) else {}
+        overlay: dict[str, Any] = read_overlay(self.config)
+        section = cast("dict[str, Any] | None", overlay.get("profiles"))
+        existing = cast("dict[str, Any] | None", section.get(name)) if isinstance(section, dict) else None
 
         clean = validate_provider_fields(updates)
         if clean.get("api_key") == "":
             clean.pop("api_key")  # "keep the profile's current key"
-        merged = {k: v for k, v in {**dict(existing or {}), **clean}.items() if v is not None}
+        merged = {
+            key: value
+            for key, value in {**dict(existing or {}), **clean}.items()
+            if value is not None
+        }
         save_profile(self.config, name, merged)
         if mark_active:
             set_active_profile(self.config, name)
         return self.profiles()
 
-    def apply_profile(self, name: str) -> dict:
+    def apply_profile(self, name: str) -> dict[str, Any]:
         """Copy a profile into the active provider. Absent fields keep theirs."""
-        profiles = read_overlay(self.config).get("profiles")
-        profile = profiles.get(name) if isinstance(profiles, dict) else None
+        overlay: dict[str, Any] = read_overlay(self.config)
+        section = cast("dict[str, Any] | None", overlay.get("profiles"))
+        profile = cast("dict[str, Any] | None", section.get(name)) if isinstance(section, dict) else None
         if not isinstance(profile, dict):
             raise KeyError(name)
 
@@ -286,16 +311,16 @@ class WebService:
             save_overlay(self.config, "provider", clean)
         set_active_profile(self.config, name)
 
-        payload = {"type": "provider", **self.provider_settings()}
+        payload: dict[str, Any] = {"type": "provider", **self.provider_settings()}
         self.events.publish(payload)
         return self.provider_settings()
 
-    def delete_profile(self, name: str) -> dict:
+    def delete_profile(self, name: str) -> dict[str, Any]:
         if not delete_profile(self.config, name):
             raise KeyError(name)
         return self.profiles()
 
-    async def probe_provider(self) -> dict:
+    async def probe_provider(self) -> dict[str, Any]:
         """One tiny real request, so a saved key is verified, not assumed."""
         try:
             result = await self._probe(
@@ -308,7 +333,7 @@ class WebService:
         except ProviderError as exc:
             return {"ok": False, "error": str(exc)[:300]}
 
-    async def list_models(self, base_url: str | None = None, api_key: str | None = None) -> dict:
+    async def list_models(self, base_url: str | None = None, api_key: str | None = None) -> dict[str, Any]:
         """Ask the gateway for its model list (`GET {base_url}/models`).
 
         Unsaved form values may be passed in, so the flow is
@@ -358,7 +383,7 @@ class WebService:
             runner = Runner(
                 self.config,
                 self.store,
-                on_event=self._publish,
+                on_event=self._emit_event,
                 approver=self._approve,
                 provider=self._provider,
             )
@@ -374,7 +399,7 @@ class WebService:
             self._busy_session = None
             self._publish({"type": "idle"})
 
-    async def _approve(self, name: str, args: dict) -> bool:
+    async def _approve(self, name: str, args: dict[str, Any]) -> bool:
         if name in self._always_allow:
             return True
         approval = self.approvals.create(name, args)
@@ -391,7 +416,11 @@ class WebService:
             self._always_allow.add(name)
         return decision in (DECISION_ONCE, DECISION_ALWAYS)
 
-    def _publish(self, payload) -> int:
+    def _emit_event(self, event: AgentEvent) -> None:
+        """Adapter for the runner's `EventSink`, which discards the sequence id."""
+        _ = self._publish(event)
+
+    def _publish(self, payload: dict[str, Any] | AgentEvent) -> int:
         # The runner hands us typed events; the service itself publishes dicts.
         data = payload if isinstance(payload, dict) else encode(payload)
         return self.events.publish(data)
@@ -408,7 +437,8 @@ async def fetch_model_ids(url: str, api_key: str) -> list[str]:
         response = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
     if response.status_code >= 400:
         raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
-    ids = parse_model_ids(response.json())
+    payload: Any = response.json()
+    ids = parse_model_ids(payload)
     if not ids:
         raise RuntimeError("the response did not contain a model list")
     return sorted(ids)
@@ -417,11 +447,15 @@ async def fetch_model_ids(url: str, api_key: str) -> list[str]:
 def parse_model_ids(payload: object) -> list[str]:
     """Accept the shapes seen in the wild: `data`/`models`, objects or strings."""
     if isinstance(payload, list):
-        candidates: list[object] = payload
+        candidates: list[object] = list(cast("list[object]", payload))
     elif isinstance(payload, dict):
-        candidates = payload.get("data") or payload.get("models") or []
-        if isinstance(candidates, dict):
-            candidates = list(candidates.values())
+        section = cast(dict[str, Any], payload)
+        raw: Any = section.get("data") or section.get("models") or []
+        if isinstance(raw, dict):
+            values = cast(dict[str, Any], raw)
+            candidates = list(values.values())
+        else:
+            candidates = list(raw)
     else:
         return []
 
@@ -430,16 +464,17 @@ def parse_model_ids(payload: object) -> list[str]:
         if isinstance(item, str):
             ids.append(item)
         elif isinstance(item, dict):
-            value = item.get("id") or item.get("name")
+            entry = cast(dict[str, Any], item)
+            value = entry.get("id") or entry.get("name")
             if isinstance(value, str):
                 ids.append(value)
     return sorted(set(ids))
 
 
-def _blocks(messages: list[dict]) -> list[dict]:
+def _blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Flatten OpenAI-style messages into the page's block list."""
-    blocks: list[dict] = []
-    by_call: dict[str, dict] = {}
+    blocks: list[dict[str, Any]] = []
+    by_call: dict[str, dict[str, Any]] = {}
 
     for message in messages:
         role = message.get("role")
@@ -450,13 +485,15 @@ def _blocks(messages: list[dict]) -> list[dict]:
         elif role == "assistant":
             if content.strip():
                 blocks.append({"kind": "assistant", "text": content})
-            for call in message.get("tool_calls") or []:
-                function = call.get("function") or {}
-                block = {
+            tool_calls = cast("list[object]", message.get("tool_calls") or [])
+            for call in tool_calls:
+                entry = cast(dict[str, Any], call)
+                function = cast("dict[str, Any] | None", entry.get("function") or None)
+                block: dict[str, Any] = {
                     "kind": "tool",
-                    "call_id": call.get("id") or "",
-                    "name": function.get("name") or "",
-                    "args": _parse_args(function.get("arguments")),
+                    "call_id": entry.get("id") or "",
+                    "name": (function or {}).get("name") or "",
+                    "args": _parse_args((function or {}).get("arguments")),
                     "output": "",
                     "ok": True,
                 }
@@ -464,9 +501,9 @@ def _blocks(messages: list[dict]) -> list[dict]:
                 if block["call_id"]:
                     by_call[block["call_id"]] = block
         elif role == "tool":
-            block = by_call.get(message.get("tool_call_id") or "")
-            if block is None:
-                block = {
+            found = by_call.get(message.get("tool_call_id") or "")
+            if found is None:
+                new_block: dict[str, Any] = {
                     "kind": "tool",
                     "call_id": message.get("tool_call_id") or "",
                     "name": "",
@@ -474,28 +511,31 @@ def _blocks(messages: list[dict]) -> list[dict]:
                     "output": "",
                     "ok": True,
                 }
-                blocks.append(block)
-            block["output"] = content
-            block["ok"] = not content.startswith("ERROR:")
+                blocks.append(new_block)
+                found = new_block
+            found["output"] = content
+            found["ok"] = not content.startswith("ERROR:")
 
     return blocks
 
 
-def _parse_args(raw: object) -> dict:
+def _parse_args(raw: object) -> dict[str, Any]:
     if isinstance(raw, dict):
-        return raw
+        return cast(dict[str, Any], raw)
     try:
-        value = json.loads(str(raw or "{}"))
+        value: Any = json.loads(str(raw or "{}"))
     except ValueError:
         return {"_raw": str(raw)}
-    return value if isinstance(value, dict) else {"_raw": value}
+    if isinstance(value, dict):
+        return cast(dict[str, Any], value)
+    return {"_raw": value}
 
 
 def _preview(raw: object, limit: int = 60) -> str:
     if not raw:
         return ""
     try:
-        payload = json.loads(str(raw))
+        payload: Any = json.loads(str(raw))
         text = str(payload.get("content") or "")
     except ValueError:
         text = str(raw)

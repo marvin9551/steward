@@ -15,14 +15,16 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 # Allow running this file directly without installing the package.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from steward.config import Config
-from steward.core.runner import Runner
-from steward.providers.base import ProviderResult
-from steward.session.store import SessionStore
+from steward.config import Config  # noqa: E402
+from steward.core.events import AgentEvent  # noqa: E402
+from steward.core.runner import Runner  # noqa: E402
+from steward.providers.base import ProviderResult, TextCallback  # noqa: E402
+from steward.session.store import SessionStore  # noqa: E402
 
 
 class ScriptedProvider:
@@ -31,7 +33,15 @@ class ScriptedProvider:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def __call__(self, config, messages, tools, *, on_text=None, on_reasoning=None):
+    async def __call__(
+        self,
+        config: Config,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        *,
+        on_text: TextCallback = None,
+        on_reasoning: TextCallback = None,
+    ) -> ProviderResult:
         self.calls += 1
         if self.calls == 1:
             arguments = json.dumps({"path": "demo.txt", "content": "hello from the debugger\n"})
@@ -50,7 +60,7 @@ class ScriptedProvider:
         )
 
 
-def show(event) -> None:
+def show(event: AgentEvent) -> None:
     print(f"[event] {event}")
 
 
@@ -78,7 +88,8 @@ async def main() -> None:
         reply = await runner.run_turn("debug-demo", "write demo.txt")
 
         print("\nfinal:", reply)
-        print("messages:", [m["role"] for m in store.messages("debug-demo")])
+        roles: list[str] = [str(message["role"]) for message in store.messages("debug-demo")]
+        print("messages:", roles)
         print("file:", (config.workspace / "demo.txt").read_text().strip())
         store.close()
 

@@ -19,10 +19,12 @@ Tool arguments arrive as a string split over many chunks and are keyed by
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 
 import httpx
 
-from steward.providers.base import ProviderError, ProviderResult
+from steward.config import Config
+from steward.providers.base import ProviderError, ProviderResult, TextCallback
 
 
 class StreamAccumulator:
@@ -35,28 +37,29 @@ class StreamAccumulator:
     def __init__(self) -> None:
         self.text = ""
         self.reasoning = ""
-        self.usage: dict = {}
-        self._calls: dict[int, dict] = {}
+        self.usage: dict[str, Any] = {}
+        self._calls: dict[int, dict[str, str]] = {}
 
-    def feed(self, chunk: dict) -> tuple[str, str]:
+    def feed(self, chunk: dict[str, Any]) -> tuple[str, str]:
         """Consume one parsed `data:` object; return (text_delta, reasoning_delta)."""
         usage = chunk.get("usage")
         if isinstance(usage, dict) and usage:
-            self.usage = usage
+            self.usage = cast("dict[str, Any]", usage)
 
-        choices = chunk.get("choices") or []
+        choices: list[dict[str, Any]] = chunk.get("choices") or []
         if not choices:
             return "", ""
-        delta = choices[0].get("delta") or choices[0].get("message") or {}
+        delta: dict[str, Any] = choices[0].get("delta") or choices[0].get("message") or {}
 
-        text = delta.get("content") or ""
-        reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+        text: str = delta.get("content") or ""
+        reasoning: str = delta.get("reasoning_content") or delta.get("reasoning") or ""
         if text:
             self.text += text
         if reasoning:
             self.reasoning += reasoning
 
-        for call in delta.get("tool_calls") or []:
+        calls: list[dict[str, Any]] = delta.get("tool_calls") or []
+        for call in calls:
             index = call.get("index")
             if not isinstance(index, int):
                 index = len(self._calls)
@@ -65,7 +68,7 @@ class StreamAccumulator:
             )
             if call.get("id"):
                 slot["id"] = call["id"]
-            function = call.get("function") or {}
+            function: dict[str, Any] = call.get("function") or {}
             if function.get("name"):
                 slot["name"] = function["name"]
             if function.get("arguments"):
@@ -74,7 +77,7 @@ class StreamAccumulator:
         return text, reasoning
 
     def result(self) -> ProviderResult:
-        calls = [self._calls[i] for i in sorted(self._calls)]
+        calls: list[dict[str, Any]] = [self._calls[i] for i in sorted(self._calls)]
         return ProviderResult(
             text=self.text,
             reasoning=self.reasoning,
@@ -84,18 +87,18 @@ class StreamAccumulator:
 
 
 async def stream_chat(
-    config,
-    messages: list[dict],
-    tools: list[dict],
+    config: Config,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
     *,
-    on_text=None,
-    on_reasoning=None,
+    on_text: TextCallback = None,
+    on_reasoning: TextCallback = None,
 ) -> ProviderResult:
     """POST /chat/completions and accumulate the SSE stream."""
     if not config.api_key:
         raise ProviderError("api_key is empty: set it in config.toml or STEWARD_API_KEY")
 
-    payload: dict = {
+    payload: dict[str, Any] = {
         "model": config.model,
         "messages": messages,
         "temperature": config.temperature,
@@ -129,10 +132,12 @@ async def stream_chat(
                 if data == "[DONE]":
                     break
                 try:
-                    chunk = json.loads(data)
+                    parsed = json.loads(data)
                 except ValueError:
                     continue
-                text, reasoning = accumulator.feed(chunk)
+                if not isinstance(parsed, dict):
+                    continue  # only chat.completion chunk objects carry deltas
+                text, reasoning = accumulator.feed(cast("dict[str, Any]", parsed))
                 if text and on_text:
                     on_text(text)
                 if reasoning and on_reasoning:

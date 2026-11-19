@@ -124,15 +124,16 @@ supported by the model.
 
 ## Safety model
 
-Four permission modes:
+Three permission modes:
 
 | Mode | Files | Shell |
 | --- | --- | --- |
 | `read-only` | read only | denied |
-| `ask-before-write` | read; every write/edit **asks first** | asks once per call |
-| `workspace-write` (default) | read + write **inside the workspace** | asks once per call |
+| `workspace-write` (default) | read; every write/edit **asks first** | asks once per call |
 | `full` | read + write inside the workspace | allowed without asking |
 
+`ask-before-write` still loads as a deprecated alias for `workspace-write` —
+it had the same behavior.
 
 What this is **not**: a sandbox. File tools resolve paths and refuse anything
 outside the workspace, and shell commands get a small environment allowlist,

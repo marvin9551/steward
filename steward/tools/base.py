@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, TypeVar
 
 MAX_TOOL_TIMEOUT = 300
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 @dataclass
@@ -32,22 +35,22 @@ class ToolContext:
 class Tool:
     name: str
     description: str
-    parameters: dict
+    parameters: dict[str, Any]
     fn: Callable[..., Any]
 
 
 REGISTRY: dict[str, Tool] = {}
 
 
-def tool(name: str, description: str, parameters: dict):
-    def decorator(fn):
+def tool(name: str, description: str, parameters: dict[str, Any]) -> Callable[[F], F]:
+    def decorator(fn: F) -> F:
         REGISTRY[name] = Tool(name=name, description=description, parameters=parameters, fn=fn)
         return fn
 
     return decorator
 
 
-def schemas() -> list[dict]:
+def schemas() -> list[dict[str, Any]]:
     return [
         {
             "type": "function",
@@ -75,7 +78,7 @@ def truncate(text: str, limit: int) -> str:
 
 async def execute(
     name: str,
-    args: dict,
+    args: dict[str, Any],
     ctx: ToolContext,
     timeout: float = 120,
 ) -> str:

@@ -15,6 +15,10 @@ provider's usage report.
 
 from __future__ import annotations
 
+from typing import Any, TypeAlias
+
+ChatMessage: TypeAlias = dict[str, Any]
+
 
 def estimate_text(text: str) -> int:
     if not text:
@@ -23,20 +27,21 @@ def estimate_text(text: str) -> int:
     return cjk + max(1, (len(text) - cjk) // 4)
 
 
-def estimate_message(message: dict) -> int:
+def estimate_message(message: ChatMessage) -> int:
     total = estimate_text(str(message.get("content") or ""))
-    for call in message.get("tool_calls") or []:
-        function = call.get("function") or {}
+    calls: list[dict[str, Any]] = message.get("tool_calls") or []
+    for call in calls:
+        function: dict[str, Any] = call.get("function") or {}
         total += estimate_text(str(function.get("name") or ""))
         total += estimate_text(str(function.get("arguments") or ""))
     total += 8  # role / separators
     return total
 
 
-def group_turns(messages: list[dict]) -> list[list[dict]]:
+def group_turns(messages: list[ChatMessage]) -> list[list[ChatMessage]]:
     """Split into turns, each starting at a user message."""
-    turns: list[list[dict]] = []
-    current: list[dict] | None = None
+    turns: list[list[ChatMessage]] = []
+    current: list[ChatMessage] | None = None
     for message in messages:
         if message.get("role") == "user":
             current = [message]
@@ -49,7 +54,7 @@ def group_turns(messages: list[dict]) -> list[list[dict]]:
     return turns
 
 
-def _shrink_tool_message(message: dict, max_chars: int) -> dict:
+def _shrink_tool_message(message: ChatMessage, max_chars: int) -> ChatMessage:
     if message.get("role") != "tool":
         return message
     content = str(message.get("content") or "")
@@ -66,16 +71,16 @@ def _shrink_tool_message(message: dict, max_chars: int) -> dict:
 
 
 def fit(
-    messages: list[dict],
+    messages: list[ChatMessage],
     budget: int,
     max_tool_chars: int = 3_500,
-) -> list[dict]:
+) -> list[ChatMessage]:
     """Keep the newest whole turns that fit, plus every system message."""
     system = [message for message in messages if message.get("role") == "system"]
     body = [message for message in messages if message.get("role") != "system"]
 
     used = sum(estimate_message(message) for message in system)
-    kept: list[list[dict]] = []
+    kept: list[list[ChatMessage]] = []
     for turn in reversed(group_turns(body)):
         cost = sum(estimate_message(message) for message in turn)
         if kept and used + cost > budget:

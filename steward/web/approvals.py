@@ -22,6 +22,7 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 DECISION_ONCE = "once"
 DECISION_ALWAYS = "always"
@@ -35,12 +36,12 @@ DEFAULT_TIMEOUT = 900.0
 class Approval:
     id: str
     name: str
-    args: dict
+    args: dict[str, Any]
     created_at: float
-    future: asyncio.Future
+    future: asyncio.Future[str]
     decision: str = ""
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
@@ -51,7 +52,7 @@ class Approval:
 
 @dataclass
 class _Pending:
-    items: dict = field(default_factory=dict)
+    items: dict[str, Approval] = field(default_factory=dict)
     counter: int = 0
 
 
@@ -59,7 +60,7 @@ class ApprovalRegistry:
     def __init__(self) -> None:
         self._pending = _Pending()
 
-    def create(self, name: str, args: dict) -> Approval:
+    def create(self, name: str, args: dict[str, Any]) -> Approval:
         """Must be called from the loop the turn runs on."""
         self._pending.counter += 1
         approval = Approval(
@@ -95,7 +96,7 @@ class ApprovalRegistry:
             self.resolve(approval_id, DECISION_DENY)
             return ""
 
-    def pending(self) -> list[dict]:
+    def pending(self) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self._pending.items.values()]
 
     def cancel_all(self, decision: str = DECISION_DENY) -> None:

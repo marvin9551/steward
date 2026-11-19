@@ -10,14 +10,19 @@ from __future__ import annotations
 import platform
 import time
 
+from steward.config import Config
+from steward.policy.permissions import ASK, decide
 
-def build_system_prompt(config) -> str:
+
+def build_system_prompt(config: Config) -> str:
     today = time.strftime("%Y-%m-%d")
+    # Mirror the decision table instead of naming modes: any mode that would
+    # ask before a write gets the note, so renames can't silently desync.
     approval_note = (
         "- This session runs in ask-before-write mode: file writes and shell\n"
         "  commands need the user's approval before they run. Keep changes small\n"
         "  and few, and do not batch unrelated edits into one call.\n"
-        if config.permission in ("workspace-write", "ask-before-write")
+        if decide(config.permission, "write_file") == ASK
         else ""
     )
     return f"""You are Steward, a personal assistant running on the user's own machine.
