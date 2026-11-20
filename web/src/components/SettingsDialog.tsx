@@ -56,12 +56,15 @@ interface Props {
   onNote: (note: string) => void
 }
 
-/** base_url presets; `opencode-go` is an internal gateway, so it only sets hints. */
+/** base_url presets; `opencode-go` is a subscription gateway, so it carries
+ * the right path, a link to its key page, and no shipped model list — the
+ * dialog discovers models live from the endpoint's `/models`. */
 const PRESETS: Array<{
   id: string
   label: string
   base_url?: string
   model?: string
+  keys_url?: string
   hint?: string
 }> = [
   {
@@ -101,8 +104,10 @@ const PRESETS: Array<{
   },
   {
     id: 'opencode-go',
-    label: 'opencode go（内部网关）',
-    hint: '内部 OpenAI 兼容网关：填入地址（通常以 /v1 结尾）和 key，然后点「同步模型」拉取模型列表',
+    label: 'OpenCode Go（订阅）',
+    base_url: 'https://opencode.ai/inference/go/v1',
+    keys_url: 'https://opencode.ai/console',
+    hint: 'OpenCode Go / Go Plus / Go Teams 订阅：先在 Console 创建 API Key，粘贴后点「同步模型」拉取模型列表',
   },
   { id: 'custom', label: '自定义', hint: '任意 OpenAI 兼容端点' },
 ]
@@ -247,6 +252,7 @@ export function SettingsDialog({
   }
 
   const presetHint = PRESETS.find((item) => item.id === preset)?.hint
+  const presetKeysUrl = PRESETS.find((item) => item.id === preset)?.keys_url
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -302,7 +308,21 @@ export function SettingsDialog({
                     ))}
                   </SelectContent>
                 </Select>
-                {presetHint ? <span className="text-[15px] text-muted-foreground">{presetHint}</span> : null}
+                {presetHint ? (
+              <div className="flex flex-wrap items-center gap-2 text-[15px] text-muted-foreground">
+                <span>{presetHint}</span>
+                {presetKeysUrl ? (
+                  <a
+                    href={presetKeysUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-info underline underline-offset-2"
+                  >
+                    去创建 API Key ↗
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
               </div>
 
               <Field label="Base URL" locked={locked('base_url')} hint="OpenAI 兼容端点，通常以 /v1 结尾">

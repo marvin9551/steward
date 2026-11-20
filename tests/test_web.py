@@ -85,6 +85,7 @@ class _ProviderLike(Protocol):
         messages: list[Payload],
         tools: list[Payload],
         *,
+        session_id: str = "",
         on_text: Callable[[str], None] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
     ) -> ProviderResult: ...
@@ -198,10 +199,11 @@ class FakeProvider:
         messages: list[Payload],
         tools: list[Payload],
         *,
+        session_id: str = "",
         on_text: Callable[[str], None] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
     ) -> ProviderResult:
-        _ = config, messages, tools, on_reasoning
+        _ = config, messages, tools, session_id, on_reasoning
         if self.gate is not None:
             await self.gate.wait()
         result = self.results.pop(0)

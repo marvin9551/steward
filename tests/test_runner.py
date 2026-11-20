@@ -24,6 +24,7 @@ class FakeProvider:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         *,
+        session_id: str = "",
         on_text: TextCallback = None,
         on_reasoning: TextCallback = None,
     ) -> ProviderResult:

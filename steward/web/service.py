@@ -43,6 +43,7 @@ from steward.core.events import AgentEvent
 from steward.core.runner import Runner
 from steward.policy.permissions import ALIASES
 from steward.providers.base import Provider, ProviderError, ProviderResult
+from steward.providers.gateways import gateway_headers
 from steward.providers.openai_compat import stream_chat
 from steward.session.store import SessionStore
 from steward.web.approvals import (
@@ -484,7 +485,13 @@ async def fetch_model_ids(url: str, api_key: str) -> list[str]:
     dialog shows the message instead of an empty list pretending to be truth.
     """
     async with httpx.AsyncClient(timeout=MODELS_TIMEOUT) as client:
-        response = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
+        response = await client.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                **gateway_headers(url),
+            },
+        )
     if response.status_code >= 400:
         raise RuntimeError(f"HTTP {response.status_code}: {response.text[:200]}")
     payload: Any = response.json()

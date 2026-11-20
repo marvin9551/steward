@@ -25,6 +25,7 @@ import httpx
 
 from steward.config import Config
 from steward.providers.base import ProviderError, ProviderResult, TextCallback
+from steward.providers.gateways import gateway_headers
 
 
 class StreamAccumulator:
@@ -91,6 +92,7 @@ async def stream_chat(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     *,
+    session_id: str = "",
     on_text: TextCallback = None,
     on_reasoning: TextCallback = None,
 ) -> ProviderResult:
@@ -114,6 +116,7 @@ async def stream_chat(
     headers = {
         "Authorization": f"Bearer {config.api_key}",
         "Content-Type": "application/json",
+        **gateway_headers(url, session_id),
     }
 
     accumulator = StreamAccumulator()

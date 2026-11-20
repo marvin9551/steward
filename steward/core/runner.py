@@ -75,6 +75,7 @@ class Runner:
                 self.config,
                 messages,
                 tool_schemas,
+                session_id=session_id,
                 on_text=lambda text: self.emit(TextDelta(text)),
                 on_reasoning=lambda text: self.emit(ReasoningDelta(text)),
             )
