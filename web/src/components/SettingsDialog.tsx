@@ -29,7 +29,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -264,10 +263,6 @@ export function SettingsDialog({
             </div>
             <div className="min-w-0">
               <DialogTitle>设置</DialogTitle>
-              <DialogDescription>
-                保存后写入 <code className="font-mono text-[16px]">~/.steward/settings.toml</code>
-                （不改动 config.toml），对下一次模型调用生效；STEWARD_* 环境变量始终优先。
-              </DialogDescription>
             </div>
           </div>
         </DialogHeader>
