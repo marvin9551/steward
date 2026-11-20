@@ -325,7 +325,12 @@ export function SettingsDialog({
             ) : null}
               </div>
 
-              <Field label="Base URL" locked={locked('base_url')} hint="OpenAI 兼容端点，通常以 /v1 结尾">
+              <Field
+                label="Base URL"
+                locked={locked('base_url')}
+                envName="STEWARD_BASE_URL"
+                hint="OpenAI 兼容端点，通常以 /v1 结尾"
+              >
                 <Input
                   value={form.base_url ?? ''}
                   disabled={locked('base_url')}
@@ -353,6 +358,11 @@ export function SettingsDialog({
                   placeholder="deepseek-chat"
                   onChange={(event) => setForm({ ...form, model: event.target.value })}
                 />
+                {locked('model') ? (
+                  <span className="text-[15px] text-brand">
+                    由环境变量 STEWARD_MODEL 锁定：删除或留空该变量并重启 steward web 后即可修改
+                  </span>
+                ) : null}
                 {syncError ? (
                   <p className="whitespace-pre-wrap break-words font-mono text-[15px] text-brand">{syncError}</p>
                 ) : null}
@@ -380,6 +390,7 @@ export function SettingsDialog({
               <Field
                 label="API Key"
                 locked={locked('api_key')}
+                envName="STEWARD_API_KEY"
                 hint={
                   locked('api_key')
                     ? '已由 STEWARD_API_KEY 环境变量设置'
@@ -613,11 +624,13 @@ function Field({
   label,
   hint,
   locked,
+  envName,
   children,
 }: {
   label: string
   hint?: string
   locked?: boolean
+  envName?: string
   children: React.ReactNode
 }) {
   return (
@@ -628,7 +641,11 @@ function Field({
       </div>
       {children}
       {locked ? (
-        <span className="text-[15px] text-brand">该字段由环境变量锁定，此处修改不会生效</span>
+        <span className="text-[15px] text-brand">
+          {envName
+            ? `由环境变量 ${envName} 锁定：删除或留空该变量并重启 steward web 后即可修改`
+            : '该字段由环境变量锁定，此处修改不会生效'}
+        </span>
       ) : null}
     </div>
   )
