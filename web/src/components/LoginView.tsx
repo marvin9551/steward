@@ -32,10 +32,10 @@ export function LoginView({ onLogin }: Props) {
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-surface px-6">
+    <div className="flex h-full w-full items-center justify-center bg-surface px-6">
       <form
         onSubmit={submit}
-        className="w-full max-w-sm rounded-2xl bg-background p-7 shadow-[0_8px_40px_rgba(0,0,0,0.1)]"
+        className="w-full max-w-md rounded-2xl bg-background p-8 shadow-[0_8px_40px_rgba(0,0,0,0.1)]"
       >
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary">
