@@ -93,6 +93,7 @@ export default function App() {
             profiles={steward.profiles}
             user={steward.user}
             status={steward.status}
+            feishu={steward.feishu}
             onSave={steward.saveProvider}
             onTest={steward.testProvider}
             onSyncModels={steward.syncModels}
@@ -100,6 +101,7 @@ export default function App() {
             onApplyProfile={steward.applyProfile}
             onDeleteProfile={steward.deleteProfile}
             onChangePassword={steward.changePassword}
+            onSaveFeishu={steward.saveFeishu}
             onNote={steward.setNote}
           />
         </>

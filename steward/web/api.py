@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from steward import __version__
-from steward.config import Config
+from steward.config import Config, persist_stored
 from steward.providers.base import Provider
 from steward.web.auth import SESSION_COOKIE, TOKEN_TTL_SECONDS
 from steward.web.service import Busy, UnknownSession, WebService
@@ -99,6 +99,11 @@ class LoginRequest(BaseModel):
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
+
+
+class FeishuChannelUpdate(BaseModel):
+    app_id: str
+    app_secret: str
 
 
 def get_service(request: Request) -> WebService:
@@ -197,6 +202,39 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
         return {"changed": True}
+
+    # -- channels -------------------------------------------------------
+
+    @app.get("/api/channel/feishu")
+    async def feishu_channel(
+        service: WebService = ServiceDep, user: str = UserDep
+    ) -> dict[str, Any]:
+        return service.feishu_status()
+
+    @app.post("/api/channel/feishu")
+    async def update_feishu_channel(
+        body: FeishuChannelUpdate,
+        response: Response,
+        service: WebService = ServiceDep,
+        user: str = UserDep,
+    ) -> dict[str, Any]:
+        app_id = body.app_id.strip()
+        app_secret = body.app_secret.strip()
+        if not app_id or not app_secret:
+            raise HTTPException(400, "app_id 和 app_secret 都不能为空")
+        service.config.feishu_app_id = app_id
+        service.config.feishu_app_secret = app_secret
+        persist_stored(
+            service.config,
+            service.store,
+            {"feishu_app_id": app_id, "feishu_app_secret": app_secret},
+        )
+        # The ws thread cannot be stopped from the outside, so a credential
+        # change takes effect on the next process start — the status payload
+        # says so instead of pretending it already reconnected.
+        service.feishu_error = ""
+        response.status_code = 200
+        return {**service.feishu_status(), "restart_required": True}
 
     # -- reads ----------------------------------------------------------
 

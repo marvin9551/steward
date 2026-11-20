@@ -127,6 +127,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 /** Raised on HTTP 401; the page treats it as "not logged in yet". */
 export class AuthError extends Error {}
 
+export interface FeishuChannelStatus {
+  configured: boolean
+  app_id: string
+  running: boolean
+  error: string
+  restart_required?: boolean
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ username: string }>('/api/login', {
@@ -135,6 +143,14 @@ export const api = {
     }),
 
   logout: () => request<{ logged_out: boolean }>('/api/logout', { method: 'POST', body: '{}' }),
+
+  feishuChannel: () => request<FeishuChannelStatus>('/api/channel/feishu'),
+
+  saveFeishuChannel: (app_id: string, app_secret: string) =>
+    request<FeishuChannelStatus>('/api/channel/feishu', {
+      method: 'POST',
+      body: JSON.stringify({ app_id, app_secret }),
+    }),
 
   me: () => request<{ username: string }>('/api/me'),
 

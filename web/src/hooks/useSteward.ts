@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
 import {
   api,
+  type FeishuChannelStatus,
   type PermissionMode,
   type Profiles,
   type ProviderSettings,
@@ -28,6 +29,7 @@ export function useSteward() {
   const [status, setStatus] = useState<Status | null>(null)
   const [provider, setProvider] = useState<ProviderSettings | null>(null)
   const [profiles, setProfiles] = useState<Profiles>({ active: null, profiles: [] })
+  const [feishu, setFeishu] = useState<FeishuChannelStatus | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [session, setSessionState] = useState<string | null>(null)
   const [blocks, dispatch] = useReducer(reducer, [] as Block[])
@@ -134,10 +136,11 @@ export function useSteward() {
     // The page is served from disk on every request, so it can be newer than
     // the process behind it. Fetching these independently keeps a missing
     // /api/provider from taking down the rest of the page.
-    const [statusResult, providerResult, profilesResult] = await Promise.allSettled([
+    const [statusResult, providerResult, profilesResult, feishuResult] = await Promise.allSettled([
       api.status(),
       api.provider(),
       api.profiles(),
+      api.feishuChannel(),
     ])
 
     if (statusResult.status === 'fulfilled') {
@@ -160,6 +163,10 @@ export function useSteward() {
 
     if (profilesResult.status === 'fulfilled') {
       setProfiles(profilesResult.value)
+    }
+
+    if (feishuResult.status === 'fulfilled') {
+      setFeishu(feishuResult.value)
     }
 
     await refreshSessions()
@@ -298,6 +305,14 @@ export function useSteward() {
     await api.changePassword(current, next)
   }, [])
 
+  const saveFeishu = useCallback(
+    async (app_id: string, app_secret: string) => {
+      const data = await api.saveFeishuChannel(app_id, app_secret)
+      setFeishu(data)
+    },
+    [],
+  )
+
   const saveProvider = useCallback(async (update: ProviderUpdate) => {
     const result = await api.updateProvider(update)
     setProvider(result)
@@ -358,6 +373,8 @@ export function useSteward() {
     login,
     logout,
     changePassword,
+    feishu,
+    saveFeishu,
     saveProvider,
     testProvider,
     syncModels,

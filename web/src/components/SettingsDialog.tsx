@@ -8,11 +8,13 @@ import {
   Plug,
   PlugZap,
   RefreshCw,
+  Rss,
   Settings2,
   Trash2,
 } from 'lucide-react'
 
 import type {
+  FeishuChannelStatus,
   ModelSyncResult,
   ProfileRow,
   Profiles,
@@ -49,6 +51,7 @@ interface Props {
   profiles: Profiles
   user: string
   status: Status | null
+  feishu: FeishuChannelStatus | null
   onSave: (update: ProviderUpdate) => Promise<ProviderSettings>
   onTest: () => Promise<ProviderProbe>
   onSyncModels: (base_url?: string, api_key?: string) => Promise<ModelSyncResult>
@@ -56,6 +59,7 @@ interface Props {
   onApplyProfile: (name: string) => Promise<unknown>
   onDeleteProfile: (name: string) => Promise<unknown>
   onChangePassword: (current: string, next: string) => Promise<void>
+  onSaveFeishu: (app_id: string, app_secret: string) => Promise<void>
   onNote: (note: string) => void
 }
 
@@ -117,11 +121,12 @@ const PRESETS: Array<{
 
 const EMPTY_PROBE: ProviderProbe = { ok: false, error: '' }
 
-type Section = 'provider' | 'profiles' | 'account' | 'about'
+type Section = 'provider' | 'profiles' | 'channel' | 'account' | 'about'
 
 const SECTIONS: Array<{ id: Section; label: string; icon: typeof Plug }> = [
   { id: 'provider', label: '供应商', icon: Plug },
   { id: 'profiles', label: '供应商预设', icon: Layers },
+  { id: 'channel', label: '渠道', icon: Rss },
   { id: 'account', label: '账号', icon: KeyRound },
   { id: 'about', label: '关于', icon: Info },
 ]
@@ -140,6 +145,7 @@ export function SettingsDialog({
   profiles,
   user,
   status,
+  feishu,
   onSave,
   onTest,
   onSyncModels,
@@ -147,6 +153,7 @@ export function SettingsDialog({
   onApplyProfile,
   onDeleteProfile,
   onChangePassword,
+  onSaveFeishu,
   onNote,
 }: Props) {
   const [section, setSection] = useState<Section>('provider')
@@ -489,6 +496,8 @@ export function SettingsDialog({
               </Button>
             </DialogFooter>
               </>
+            ) : section === 'channel' ? (
+              <FeishuSection feishu={feishu} onSave={onSaveFeishu} onDone={onNote} />
             ) : section === 'account' ? (
               <AccountSection user={user} onChange={onChangePassword} onDone={onNote} />
             ) : section === 'about' ? (
@@ -611,6 +620,103 @@ function SectionButton({
       <span className="min-w-0 flex-1 text-left">{children}</span>
       {badge ? <Badge variant="info">{badge}</Badge> : null}
     </button>
+  )
+}
+
+/** Feishu channel setup: credentials live in the settings table; the
+ * long-connection channel starts with the process, so a credential change
+ * takes effect after a restart. */
+function FeishuSection({
+  feishu,
+  onSave,
+  onDone,
+}: {
+  feishu: FeishuChannelStatus | null
+  onSave: (app_id: string, app_secret: string) => Promise<void>
+  onDone: (note: string) => void
+}) {
+  const [appId, setAppId] = useState(feishu?.app_id ?? '')
+  const [secret, setSecret] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (busy || !appId.trim() || !secret) return
+    setBusy(true)
+    setError('')
+    try {
+      await onSave(appId.trim(), secret)
+      setSecret('')
+      onDone('飞书渠道已保存，重启 steward web 后生效')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="grid gap-4" onSubmit={submit}>
+      <div className="rounded-md border border-border border-l-4 border-l-info bg-info-soft/60 px-3 py-2 text-[16px] leading-relaxed text-foreground">
+        <p className="font-semibold">接入步骤（飞书开放平台 open.feishu.cn）</p>
+        <p>1. 创建企业自建应用，开启「机器人」能力</p>
+        <p>2. 事件与回调：订阅方式选「长连接」，添加事件 im.message.receive_v1</p>
+        <p>3. 回调配置（长连接）订阅 card.action.trigger，并开启「交互式卡片」</p>
+        <p>4. 权限：im:message 收发消息、cardkit:card:write（更新卡片）</p>
+        <p>5. 创建版本并发布——版本不发布机器人什么都收不到</p>
+      </div>
+
+      <div className="flex items-center gap-2 text-[16px]">
+        <span className="text-muted-foreground">状态</span>
+        {feishu?.running ? (
+          <Badge variant="success">已连接</Badge>
+        ) : feishu?.configured ? (
+          <Badge variant="warning">已配置，未运行</Badge>
+        ) : (
+          <Badge variant="info">未配置</Badge>
+        )}
+      </div>
+      {feishu?.error ? (
+        <p className="whitespace-pre-wrap break-words font-mono text-[15px] text-brand">{feishu.error}</p>
+      ) : null}
+
+      <Field label="App ID" hint="cli_ 开头，凭证与基础信息页">
+        <Input
+          value={appId}
+          placeholder="cli_xxxxxxxx"
+          autoComplete="off"
+          onChange={(event) => setAppId(event.target.value)}
+        />
+      </Field>
+
+      <Field
+        label="App Secret"
+        hint={feishu?.configured ? '已配置，留空表示保持不变' : '仅生成时展示一次'}
+      >
+        <Input
+          type="password"
+          autoComplete="new-password"
+          value={secret}
+          placeholder={feishu?.configured ? '••••••••' : ''}
+          onChange={(event) => setSecret(event.target.value)}
+        />
+      </Field>
+
+      {error ? (
+        <p className="rounded-md border border-border border-l-4 border-l-brand bg-brand-soft px-3 py-2 text-[17px] text-foreground">
+          {error}
+        </p>
+      ) : null}
+
+      <Button type="submit" disabled={busy || !appId.trim() || !secret}>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        保存
+      </Button>
+      <p className="text-[15px] text-muted-foreground">
+        保存后写入本地数据库；飞书会话通过长连接接收消息，无需公网地址。
+      </p>
+    </form>
   )
 }
 

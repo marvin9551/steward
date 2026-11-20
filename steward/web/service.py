@@ -144,6 +144,15 @@ class WebService:
         apply_stored(self.config, self.store)
         # In-process login throttling: N failures locks the username briefly.
         self._login_failures: dict[str, tuple[int, float]] = {}
+        self.loop = asyncio.get_running_loop()
+        # Per-turn hooks the channels register before starting a turn: the
+        # observer receives encoded events (reply delivery), the approver
+        # replaces the web approval card (an IM approval card instead).
+        self._turn_observers: dict[str, Callable[[dict[str, Any]], None]] = {}
+        self._turn_approvers: dict[str, Callable[[str, dict[str, Any]], Awaitable[bool]]] = {}
+        self.feishu: Any = None
+        self.feishu_error = ""
+        self._start_feishu()
 
     # -- auth -----------------------------------------------------------
 
@@ -429,15 +438,82 @@ class WebService:
     def resolve_approval(self, approval_id: str, decision: str) -> bool:
         return self.approvals.resolve(approval_id, decision)
 
+    # -- approvals (shared with the channels) ----------------------------
+
+    def create_approval(self, name: str, args: dict[str, Any]) -> Any:
+        """Open an approval; both the web card and the IM cards wait on it."""
+        approval = self.approvals.create(name, args)
+        self._publish({"type": "approval_request", **approval.to_dict()})
+        return approval
+
+    def publish(self, payload: dict[str, Any] | AgentEvent) -> int:
+        """Public alias of `_publish`, for channels outside this module."""
+        return self._publish(payload)
+
+    def is_always_allowed(self, name: str) -> bool:
+        return name in self._always_allow
+
+    def remember_always_allowed(self, name: str) -> None:
+        self._always_allow.add(name)
+
+    # -- channels -------------------------------------------------------
+
+    def _start_feishu(self) -> None:
+        if not (self.config.feishu_app_id and self.config.feishu_app_secret):
+            return
+        try:
+            from steward.channel.feishu import FeishuChannel
+        except Exception as exc:  # noqa: BLE001 - status text, not a crash
+            self.feishu_error = f"渠道模块加载失败：{exc}"
+            return
+        channel = FeishuChannel(self)
+        if channel.start():
+            self.feishu = channel
+            self.feishu_error = ""
+        else:
+            self.feishu_error = channel.error
+
+    def feishu_status(self) -> dict[str, Any]:
+        configured = bool(self.config.feishu_app_id and self.config.feishu_app_secret)
+        return {
+            "configured": configured,
+            "app_id": self.config.feishu_app_id,
+            "running": bool(self.feishu and self.feishu.running),
+            "error": self.feishu_error or (self.feishu.error if self.feishu else ""),
+        }
+
+    def register_turn_callbacks(
+        self,
+        session_id: str,
+        observer: Callable[[dict[str, Any]], None] | None = None,
+        approver: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None,
+    ) -> None:
+        if observer:
+            self._turn_observers[session_id] = observer
+        if approver:
+            self._turn_approvers[session_id] = approver
+
     # -- turn execution -------------------------------------------------
 
     async def _worker(self, session_id: str, text: str) -> None:
         try:
+            observer = self._turn_observers.pop(session_id, None)
+            approver = self._turn_approvers.pop(session_id, None) or self._approve
+
+            def on_event(event: AgentEvent) -> None:
+                self._emit_event(event)
+                if observer is not None:
+                    data = event if isinstance(event, dict) else encode(event)
+                    try:
+                        observer(data)
+                    except Exception:  # noqa: BLE001 - a broken channel must
+                        pass  # never take the turn down with it
+
             runner = Runner(
                 self.config,
                 self.store,
-                on_event=self._emit_event,
-                approver=self._approve,
+                on_event=on_event,
+                approver=approver,
                 provider=self._provider,
             )
             await runner.run_turn(session_id, text)

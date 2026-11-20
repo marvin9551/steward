@@ -37,6 +37,8 @@ STORED_KEYS: tuple[str, ...] = (
     "temperature",
     "stream_usage",
     "permission",
+    "feishu_app_id",
+    "feishu_app_secret",
 )
 
 ENV_MAP = {
@@ -72,6 +74,9 @@ class Config:
     permission: str = "workspace-write"
     auto_approve: bool = False
     show_reasoning: bool = False
+    # Feishu channel credentials (optional; empty disables the channel).
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
     # Fields the environment set during load(); the web UI refuses to edit
     # these because an env var would win on the next restart.
     env_overrides: list[str] = field(default_factory=list)
