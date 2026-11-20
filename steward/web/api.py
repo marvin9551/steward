@@ -177,6 +177,13 @@ def create_app(
         )
         return {"username": body.username}
 
+    @app.post("/api/logout")
+    async def logout(response: Response) -> dict[str, Any]:
+        """Clear the session cookie. The JWT itself runs out with its TTL;
+        there is no server-side session state to revoke."""
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"logged_out": True}
+
     @app.get("/api/me")
     async def me(user: str = UserDep) -> dict[str, Any]:
         return {"username": user}

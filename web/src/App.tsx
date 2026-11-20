@@ -62,7 +62,7 @@ export default function App() {
           />
 
           <main className="flex min-w-0 flex-1 flex-col bg-background">
-            <TopBar status={steward.status} session={steward.session} />
+            <TopBar session={steward.session} onLogout={steward.logout} />
 
             <Transcript
               blocks={steward.blocks}

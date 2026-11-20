@@ -134,6 +134,8 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
 
+  logout: () => request<{ logged_out: boolean }>('/api/logout', { method: 'POST', body: '{}' }),
+
   me: () => request<{ username: string }>('/api/me'),
 
   changePassword: (current_password: string, new_password: string) =>

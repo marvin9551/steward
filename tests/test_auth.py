@@ -191,6 +191,14 @@ class TestHttpAuth(HttpTestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
 
+    def test_logout_clears_the_session(self) -> None:
+        _ = self.login()
+        self.assertEqual(self.client.get("/api/me").status_code, 200)
+
+        response = self.client.post("/api/logout")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.get("/api/me").status_code, 401)
+
     def test_jwt_secret_file_is_written_with_restricted_permissions(self) -> None:
         secret_path = self.config.data_dir / "jwt_secret"
         self.assertTrue(secret_path.is_file())

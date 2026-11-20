@@ -282,6 +282,18 @@ export function useSteward() {
     [bootstrap],
   )
 
+  const logout = useCallback(async () => {
+    try {
+      await api.logout()
+    } catch {
+      // The cookie is what matters; clearing local state regardless.
+    }
+    setUser(null)
+    setSession(null)
+    setNote('')
+    dispatch({ type: 'reset', blocks: [] })
+  }, [setSession])
+
   const changePassword = useCallback(async (current: string, next: string) => {
     await api.changePassword(current, next)
   }, [])
@@ -344,6 +356,7 @@ export function useSteward() {
     decide,
     setPermission,
     login,
+    logout,
     changePassword,
     saveProvider,
     testProvider,
