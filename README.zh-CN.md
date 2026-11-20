@@ -74,20 +74,22 @@ make web-dev  # Vite 开发服务器 :5173，把 /api 代理到 :8765
 
 ## 配置
 
-`config.toml` 分两段：`[provider]` 和 `[agent]`，所有字段见 [`config.example.toml`](config.example.toml)。环境变量会覆盖文件，因此 key 不必写进仓库：
+页面上能编辑的所有配置都存在 `steward.db`（SQLite）的 `settings` 表里：供应商端点 / 模型 / key、temperature、用量上报、权限模式，以及命名档案。在网页设置对话框里修改即可——不再有需要手工编辑的配置文件。
 
-| 环境变量 | 含义 |
+只有数据库**位置**在 SQLite 之外配置。环境变量（优先级从弱到强：默认值 → 数据库 → 环境变量）：
+
+| 变量 | 含义 |
 | --- | --- |
-| `STEWARD_API_KEY` | 模型 API Key |
-| `STEWARD_BASE_URL` | OpenAI 兼容的 base URL |
-| `STEWARD_MODEL` | 模型 id |
+| `STEWARD_API_KEY` | 模型 API Key（钉住该字段） |
+| `STEWARD_BASE_URL` | OpenAI 兼容的 base URL（钉住该字段） |
+| `STEWARD_MODEL` | 模型 id（钉住该字段） |
 | `STEWARD_WORKSPACE` | 工作目录 |
 | `STEWARD_DATA_DIR` | 数据库 / 数据目录 |
-| `STEWARD_PERMISSION` | `read-only`、`workspace-write`、`full` |
+| `STEWARD_PERMISSION` | `read-only`、`workspace-write`、`full`（钉住权限模式） |
+
+环境变量会**钉住**对应字段：设置对话框将其锁定，因为环境变量在每次重启时都会胜出。仍在使用旧 `config.toml` / `settings.toml` 的部署会在首次启动 web 时迁移进数据库，之后这些文件被忽略。
 
 任意 OpenAI 兼容端点都可以：OpenAI、DeepSeek、GLM、Qwen、Moonshot、MiniMax、本地 Ollama / vLLM，或聚合网关。模型需要支持工具调用。
-
-优先级从弱到强：默认值 → `config.toml` → `~/.steward/settings.toml`（网页 Provider 对话框写入的覆盖文件）→ `STEWARD_*` 环境变量。
 
 ## 安全模型
 

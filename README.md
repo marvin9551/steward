@@ -101,22 +101,27 @@ make web-dev  # Vite dev server on :5173, proxying /api to :8765
 
 ## Configuration
 
-`config.toml` has two sections, `[provider]` and `[agent]`; see
-[`config.example.toml`](config.example.toml) for every field. Environment
-variables override the file, so a key never has to live in the repository:
+Everything the page can edit lives in the `settings` table inside
+`steward.db` (SQLite): provider endpoint / model / key, temperature, usage
+reporting, the permission mode, and named provider profiles. Edit it from
+the web settings dialog — there is no config file to hand-edit any more.
+
+Only the database *location* is configured outside SQLite. Environment
+variables (weakest to strongest: defaults → database → environment):
 
 | Variable | Meaning |
 | --- | --- |
-| `STEWARD_API_KEY` | provider API key |
-| `STEWARD_BASE_URL` | OpenAI-compatible base URL |
-| `STEWARD_MODEL` | model id |
+| `STEWARD_API_KEY` | provider API key (pins the field) |
+| `STEWARD_BASE_URL` | OpenAI-compatible base URL (pins the field) |
+| `STEWARD_MODEL` | model id (pins the field) |
 | `STEWARD_WORKSPACE` | workspace directory |
 | `STEWARD_DATA_DIR` | database / data directory |
-| `STEWARD_PERMISSION` | `read-only`, `workspace-write`, `full` |
+| `STEWARD_PERMISSION` | `read-only`, `workspace-write`, `full` (pins the mode) |
 
-Precedence, weakest to strongest: defaults → `config.toml` →
-`~/.steward/settings.toml` (written by the web page's provider dialog) →
-`STEWARD_*` environment variables.
+An env var *pins* its field: the settings dialog locks it, because the env
+var would win on every restart. A deployment that still carries the old
+`config.toml` / `settings.toml` is migrated into the database on first web
+start; after that the files are ignored.
 
 Any OpenAI-compatible endpoint works: OpenAI, DeepSeek, GLM, Qwen, Moonshot,
 MiniMax, a local Ollama or vLLM server, or a gateway. Tool calling must be

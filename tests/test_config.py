@@ -2,129 +2,156 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
 
-from steward.config import Config, load, read_overlay, save_overlay, save_profile, set_active_profile
-from steward.config import delete_profile as delete_stored_profile
+from steward.config import (
+    Config,
+    apply_stored,
+    load,
+    migrate_files,
+    persist_stored,
+)
 from steward.policy.permissions import ALLOW, ASK, DENY, decide
+from steward.session.store import SessionStore
 
 
 class TestConfig(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
+        self._env_names = (
+            "STEWARD_API_KEY",
+            "STEWARD_MODEL",
+            "STEWARD_BASE_URL",
+            "STEWARD_DATA_DIR",
+            "STEWARD_WORKSPACE",
+            "STEWARD_PERMISSION",
+        )
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
-        for name in (
-            "STEWARD_API_KEY",
-            "STEWARD_MODEL",
-            "STEWARD_DATA_DIR",
-            "STEWARD_WORKSPACE",
-        ):
+        for name in self._env_names:
             os.environ.pop(name, None)
 
-    def test_toml_values_and_env_override(self) -> None:
-        (self.tmp / "config.toml").write_text(
-            f"""
-[provider]
-base_url = "https://example.test/v1"
-model = "some-model"
-api_key = "from-file"
+    def make_store(self, config: Config) -> SessionStore:
+        return SessionStore(config.db_path)
 
-[agent]
-workspace = "{self.tmp / 'ws'}"
-data_dir = "{self.tmp / 'data'}"
-permission = "read-only"
-max_steps = 7
-""",
-            encoding="utf-8",
-        )
+    def test_env_values_apply_and_report_the_pin(self) -> None:
         os.environ["STEWARD_API_KEY"] = "from-env"
+        os.environ["STEWARD_BASE_URL"] = "https://example.test/v1"
 
-        config = load(self.tmp / "config.toml")
+        config = load()
 
         self.assertEqual(config.api_key, "from-env")
-        self.assertEqual(config.model, "some-model")
-        self.assertEqual(config.permission, "read-only")
-        self.assertEqual(config.max_steps, 7)
-        self.assertTrue(config.workspace.is_dir())
-        self.assertTrue(config.data_dir.is_dir())
+        self.assertEqual(config.base_url, "https://example.test/v1")
+        self.assertIn("api_key", config.env_overrides)
+        self.assertIn("base_url", config.env_overrides)
 
     def test_unknown_permission_is_rejected(self) -> None:
-        (self.tmp / "config.toml").write_text(
-            f"""
-[agent]
-workspace = "{self.tmp / 'ws'}"
-data_dir = "{self.tmp / 'data'}"
-permission = "yolo"
-""",
-            encoding="utf-8",
-        )
+        os.environ["STEWARD_PERMISSION"] = "yolo"
         with self.assertRaises(ValueError):
-            load(self.tmp / "config.toml")
+            load()
 
-    def test_page_overlay_applies_and_env_still_wins(self) -> None:
-        data = self.tmp / "data"
-        data.mkdir()
-        save_overlay(Config(data_dir=data), "provider", {
-            "model": "overlay-model",
-            "api_key": "overlay-key",
-        })
-        os.environ["STEWARD_DATA_DIR"] = str(data)
-        os.environ["STEWARD_WORKSPACE"] = str(self.tmp / "ws")
+    def test_stored_settings_apply_to_the_config(self) -> None:
+        config = load()
+        store = self.make_store(config)
+        _ = store.set_settings(
+            {
+                "base_url": '"https://go.test/v1"',
+                "model": '"stored-model"',
+                "temperature": "0.9",
+                "stream_usage": "true",
+            }
+        )
 
-        config = load(self.tmp / "missing.toml")
+        apply_stored(config, store)
 
-        self.assertEqual(config.model, "overlay-model")
-        self.assertEqual(config.api_key, "overlay-key")
-        self.assertIn("data_dir", config.env_overrides)
+        self.assertEqual(config.base_url, "https://go.test/v1")
+        self.assertEqual(config.model, "stored-model")
+        self.assertEqual(config.temperature, 0.9)
+        self.assertTrue(config.stream_usage)
 
+    def test_stored_values_lose_to_env_pins(self) -> None:
         os.environ["STEWARD_MODEL"] = "env-model"
-        config = load(self.tmp / "missing.toml")
+        config = load()
+        store = self.make_store(config)
+        _ = store.set_settings({"model": '"stored-model"'})
+
+        apply_stored(config, store)
+
         self.assertEqual(config.model, "env-model")
-        self.assertEqual(config.api_key, "overlay-key")
 
-    def test_profiles_round_trip_and_stay_out_of_the_active_config(self) -> None:
-        data = self.tmp / "data"
-        data.mkdir()
-        config = Config(data_dir=data)
-        os.environ["STEWARD_DATA_DIR"] = str(data)
-        os.environ["STEWARD_WORKSPACE"] = str(self.tmp / "ws")
+    def test_persist_and_apply_round_trip(self) -> None:
+        config = load()
+        store = self.make_store(config)
 
-        save_profile(config, "deepseek", {"base_url": "https://api.deepseek.com/v1",
-                                          "model": "deepseek-chat", "api_key": "sk-1"})
-        save_profile(config, "opencode-go", {"base_url": "https://go.internal/v1",
-                                             "model": "glm-5.3"})
-        set_active_profile(config, "opencode-go")
+        persist_stored(config, store, {"model": "next-model", "api_key": "sk-next"})
+        fresh = load()
+        apply_stored(fresh, store)
 
-        overlay: dict[str, Any] = read_overlay(config)
-        self.assertEqual(overlay["profiles"]["deepseek"]["model"], "deepseek-chat")
-        self.assertEqual(overlay["profiles"]["active"], "opencode-go")
+        self.assertEqual(fresh.model, "next-model")
+        self.assertEqual(fresh.api_key, "sk-next")
 
-        # load() must ignore profile sections: a profile's key never leaks in.
-        loaded = load(self.tmp / "missing.toml")
-        self.assertEqual(loaded.api_key, "")
-        self.assertEqual(loaded.model, "deepseek-chat")  # the default, untouched
+    def test_corrupted_rows_are_skipped(self) -> None:
+        config = load()
+        store = self.make_store(config)
+        _ = store.set_settings({"model": '"good"', "temperature": "not-a-number"})
 
-        self.assertTrue(delete_stored_profile(config, "opencode-go"))
-        self.assertFalse(delete_stored_profile(config, "opencode-go"))
-        overlay = read_overlay(config)
-        self.assertIsNone(overlay["profiles"].get("active"))
+        apply_stored(config, store)
 
-    def test_save_overlay_merges_and_can_drop_a_key(self) -> None:
-        data = self.tmp / "data"
-        data.mkdir()
-        config = Config(data_dir=data)
-        path = save_overlay(config, "provider", {"model": "one", "temperature": 0.9})
+        self.assertEqual(config.model, "good")
+        self.assertEqual(config.temperature, 0.3)  # default survives
 
-        save_overlay(config, "provider", {"model": None, "api_key": "sk-new"})
-        text = path.read_text(encoding="utf-8")
+    def test_migrate_files_imports_the_old_config_once(self) -> None:
+        old_cwd = Path.cwd()
+        os.chdir(self.tmp)
+        try:
+            os.environ["STEWARD_DATA_DIR"] = str(self.tmp / "data")
+            config = load()
+            store = self.make_store(config)
 
-        self.assertNotIn("model =", text)
-        self.assertIn('api_key = "sk-new"', text)
-        self.assertIn("temperature = 0.9", text)
-        self.assertIn("Managed by the steward web UI", text)
+            (self.tmp / "config.toml").write_text(
+                """
+[provider]
+base_url = "https://old.example/v1"
+model = "old-model"
+
+[profiles.opencode-go]
+base_url = "https://go.test/v1"
+model = "glm-5.3"
+""",
+                encoding="utf-8",
+            )
+            config.data_dir.mkdir(parents=True, exist_ok=True)
+            (config.data_dir / "settings.toml").write_text(
+                """
+[provider]
+api_key = "overlay-key"
+
+[profiles]
+active = "opencode-go"
+""",
+                encoding="utf-8",
+            )
+
+            migrate_files(config, store)
+        finally:
+            os.chdir(old_cwd)
+        fresh = load()
+        apply_stored(fresh, store)
+
+        self.assertEqual(fresh.base_url, "https://old.example/v1")
+        self.assertEqual(fresh.model, "old-model")
+        self.assertEqual(fresh.api_key, "overlay-key")
+        saved = store.profiles()
+        self.assertEqual([row["name"] for row in saved], ["opencode-go"])
+        self.assertEqual(store.settings().get("active_profile"), '"opencode-go"')
+
+        # Once the DB holds keys, stale files can no longer overwrite them.
+        persist_stored(config, store, {"model": "page-model"})
+        migrate_files(config, store)
+        again = load()
+        apply_stored(again, store)
+        self.assertEqual(again.model, "page-model")
 
 
 class TestPermissionTable(unittest.TestCase):

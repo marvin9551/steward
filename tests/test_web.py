@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Protocol, Self, TypeAlias, cast
 
 import httpx
 
-import steward.config as _config_module
 import steward.web.stream as _stream_module
 from steward import __version__
 from steward.config import Config
@@ -25,6 +24,7 @@ from steward.core.events import (
     TurnDone,
 )
 from steward.providers.base import ProviderError, ProviderResult
+from steward.session.store import SessionStore
 from steward.web.approvals import Approval, ApprovalRegistry
 from steward.web.service import Busy, UnknownSession, WebService, parse_model_ids
 from steward.web.stream import EventLog
@@ -101,6 +101,7 @@ class _WebServiceLike(Protocol):
     config: Config
     events: _EventLogLike
     approvals: _ApprovalRegistryLike
+    store: SessionStore
     _fetch_models: ModelsFetcher
 
     async def close(self) -> None: ...
@@ -146,11 +147,6 @@ class _ClientLike(Protocol):
 def _encode(event: object) -> Payload:
     """encode() returns a bare dict upstream; retype the seam."""
     return cast(Payload, getattr(_stream_module, "encode")(event))  # noqa: B009
-
-
-def _read_overlay(config: Config) -> Payload:
-    """read_overlay() returns a bare dict upstream; retype the seam."""
-    return cast(Payload, getattr(_config_module, "read_overlay")(config))  # noqa: B009
 
 
 def _json(response: httpx.Response) -> Payload:
@@ -363,7 +359,7 @@ class TestWebService(ServiceTestCase):
         self.assertTrue(status["has_api_key"])
         self.assertEqual(
             status["permissions"],
-            ["read-only", "ask-before-write", "workspace-write", "full"],
+            ["read-only", "workspace-write", "full"],
         )
         self.assertEqual(status["version"], __version__)
 
@@ -545,7 +541,7 @@ class TestProviderSettings(ServiceTestCase):
         self.assertNotIn("api_key", settings)
         self.assertEqual(settings["env_overrides"], ["base_url"])
 
-    async def test_set_provider_applies_and_persists_to_the_overlay(self) -> None:
+    async def test_set_provider_applies_and_persists_to_the_settings_table(self) -> None:
         service = self.start(FakeProvider([]))
 
         _ = service.set_provider(
@@ -561,10 +557,10 @@ class TestProviderSettings(ServiceTestCase):
         self.assertEqual(self.config.model, "page-model")
         self.assertEqual(self.config.base_url, "https://api.test/v1")
         self.assertTrue(self.config.stream_usage)
-        text = self.overlay_text()
-        self.assertIn('model = "page-model"', text)
-        self.assertIn('api_key = "sk-from-page"', text)
-        self.assertIn("stream_usage = true", text)
+        stored = service.store.settings()
+        self.assertEqual(stored["model"], '"page-model"')
+        self.assertEqual(stored["api_key"], '"sk-from-page"')
+        self.assertEqual(stored["stream_usage"], "true")
         published = [e for e in service.events.tail(20) if e.get("type") == "provider"]
         self.assertEqual(published[0]["model"], "page-model")
         self.assertNotIn("api_key", published[0])
@@ -576,7 +572,7 @@ class TestProviderSettings(ServiceTestCase):
         _ = service.set_provider({"api_key": "", "model": "page-model"})
 
         self.assertEqual(self.config.api_key, "sk-kept")
-        self.assertNotIn("api_key", self.overlay_text())
+        self.assertNotIn("api_key", service.store.settings())
 
     async def test_env_locked_fields_are_refused(self) -> None:
         self.config.env_overrides = ["api_key", "model"]
@@ -688,9 +684,6 @@ class TestProviderSettings(ServiceTestCase):
 
 
 class TestProfiles(ServiceTestCase):
-    def overlay(self) -> Payload:
-        return _read_overlay(self.config)
-
     async def test_save_list_apply_delete_round_trip(self) -> None:
         service = self.start(FakeProvider([]))
         self.assertEqual(service.profiles(), {"active": None, "profiles": []})
@@ -925,8 +918,8 @@ class TestHttpSurface(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(_json(response)["model"], "page-model")
         self.assertEqual(self.config.model, "page-model")
-        overlay = self.config.data_dir / "settings.toml"
-        self.assertIn('model = "page-model"', overlay.read_text(encoding="utf-8"))
+        stored = self.service.store.settings()
+        self.assertEqual(stored["model"], '"page-model"')
 
     def test_invalid_provider_update_is_a_400(self) -> None:
         response = self.client.post("/api/provider", json={"temperature": 9})

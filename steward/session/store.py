@@ -44,6 +44,21 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TEXT    NOT NULL,
     updated_at    TEXT    NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS provider_profiles (
+    name         TEXT PRIMARY KEY,
+    base_url     TEXT    NOT NULL DEFAULT '',
+    model        TEXT    NOT NULL DEFAULT '',
+    api_key      TEXT    NOT NULL DEFAULT '',
+    temperature  REAL,
+    stream_usage INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL
+);
 """
 
 
@@ -160,6 +175,70 @@ class SessionStore:
                 "UPDATE users SET password_hash = ?, updated_at = datetime('now') "
                 "WHERE username = ?",
                 (password_hash, username),
+            )
+        return cursor.rowcount > 0
+
+    # -- settings (key/value) -------------------------------------------
+
+    def settings(self) -> dict[str, str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT key, value FROM settings").fetchall()
+        return {str(row["key"]): str(row["value"]) for row in rows}
+
+    def set_settings(self, values: dict[str, str]) -> None:
+        if not values:
+            return
+        with self._lock, self._conn:
+            self._conn.executemany(
+                "INSERT INTO settings(key, value, updated_at) VALUES (?, ?, datetime('now')) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                "updated_at = datetime('now')",
+                [(key, value) for key, value in values.items()],
+            )
+
+    # -- provider profiles ----------------------------------------------
+
+    def profiles(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT name, base_url, model, api_key, temperature, stream_usage "
+                "FROM provider_profiles ORDER BY name"
+            ).fetchall()
+        return [cast(dict[str, Any], dict(row)) for row in rows]
+
+    def get_profile(self, name: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT name, base_url, model, api_key, temperature, stream_usage "
+                "FROM provider_profiles WHERE name = ?",
+                (name,),
+            ).fetchone()
+        return cast(dict[str, Any], dict(row)) if row else None
+
+    def upsert_profile(self, profile: dict[str, Any]) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO provider_profiles(name, base_url, model, api_key, "
+                "temperature, stream_usage, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now')) "
+                "ON CONFLICT(name) DO UPDATE SET base_url = excluded.base_url, "
+                "model = excluded.model, api_key = excluded.api_key, "
+                "temperature = excluded.temperature, stream_usage = excluded.stream_usage, "
+                "updated_at = datetime('now')",
+                (
+                    str(profile["name"]),
+                    str(profile.get("base_url") or ""),
+                    str(profile.get("model") or ""),
+                    str(profile.get("api_key") or ""),
+                    profile.get("temperature"),
+                    1 if profile.get("stream_usage") else 0,
+                ),
+            )
+
+    def delete_profile(self, name: str) -> bool:
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM provider_profiles WHERE name = ?", (name,)
             )
         return cursor.rowcount > 0
 

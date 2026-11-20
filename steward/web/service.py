@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -31,13 +32,9 @@ import httpx
 from steward import __version__
 from steward.config import (
     PERMISSION_MODES,
-    PROFILE_NAME,
     Config,
-    delete_profile,
-    read_overlay,
-    save_overlay,
-    save_profile,
-    set_active_profile,
+    apply_stored,
+    persist_stored,
 )
 from steward.core.events import AgentEvent
 from steward.core.runner import Runner
@@ -68,6 +65,7 @@ PROVIDER_FIELDS = ("base_url", "model", "api_key", "temperature", "stream_usage"
 MODELS_TIMEOUT = 15.0
 LOGIN_MAX_FAILURES = 5
 LOGIN_LOCK_SECONDS = 30.0
+PROFILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,31}")
 
 # A probe is the provider seam used by `/api/provider/test`: one chat call.
 ProbeFn = Callable[[Config, list[dict[str, Any]], list[dict[str, Any]]], Awaitable[ProviderResult]]
@@ -143,6 +141,7 @@ class WebService:
         self._always_allow: set[str] = set()
         self._secret = load_or_create_secret(config.data_dir)
         ensure_default_user(self.store)
+        apply_stored(self.config, self.store)
         # In-process login throttling: N failures locks the username briefly.
         self._login_failures: dict[str, tuple[int, float]] = {}
 
@@ -256,7 +255,10 @@ class WebService:
         mode = ALIASES.get(mode, mode)
         if mode not in PERMISSION_MODES:
             raise ValueError(f"permission must be one of {PERMISSION_MODES}, got {mode!r}")
+        if "permission" in self.config.env_overrides:
+            raise ValueError("permission is set by STEWARD_PERMISSION and cannot be changed here")
         self.config.permission = mode
+        persist_stored(self.config, self.store, {"permission": mode})
         self.events.publish({"type": "config", "permission": mode})
         return mode
 
@@ -282,7 +284,7 @@ class WebService:
         for name, value in clean.items():
             setattr(self.config, name, value)
         if clean:
-            save_overlay(self.config, "provider", clean)
+            persist_stored(self.config, self.store, clean)
 
         payload: dict[str, Any] = {"type": "provider", **self.provider_settings()}
         self.events.publish(payload)
@@ -290,30 +292,31 @@ class WebService:
 
     # -- provider profiles ----------------------------------------------
 
+    def _active_profile(self) -> str | None:
+        raw = self.store.settings().get("active_profile")
+        if not raw:
+            return None
+        try:
+            name: Any = json.loads(raw)
+        except ValueError:
+            return raw
+        return name if isinstance(name, str) else None
+
     def profiles(self) -> dict[str, Any]:
-        """Named provider sets saved in the overlay. Keys are never listed."""
-        overlay: dict[str, Any] = read_overlay(self.config)
-        section = cast("dict[str, Any] | None", overlay.get("profiles"))
-        rows: list[dict[str, Any]] = []
-        active: Any = None
-        if isinstance(section, dict):
-            active = section.get("active")
-            for name, values in section.items():
-                if name == "active" or not isinstance(values, dict):
-                    continue
-                entry = cast(dict[str, Any], values)
-                rows.append(
-                    {
-                        "name": name,
-                        "base_url": str(entry.get("base_url") or ""),
-                        "model": str(entry.get("model") or ""),
-                        "api_key_set": bool(entry.get("api_key")),
-                        "temperature": entry.get("temperature"),
-                        "stream_usage": entry.get("stream_usage"),
-                    }
-                )
+        """Named provider sets saved in the settings table. Keys are never listed."""
+        rows = [
+            {
+                "name": str(row["name"]),
+                "base_url": str(row.get("base_url") or ""),
+                "model": str(row.get("model") or ""),
+                "api_key_set": bool(row.get("api_key")),
+                "temperature": row.get("temperature"),
+                "stream_usage": bool(row.get("stream_usage")),
+            }
+            for row in self.store.profiles()
+        ]
         rows.sort(key=lambda row: str(row["name"]))
-        return {"active": active, "profiles": rows}
+        return {"active": self._active_profile(), "profiles": rows}
 
     def save_profile(self, name: str, updates: dict[str, Any], mark_active: bool = False) -> dict[str, Any]:
         """Upsert a profile. Empty `api_key` keeps the one already in it.
@@ -325,9 +328,7 @@ class WebService:
         name = name.strip()
         if not PROFILE_NAME.fullmatch(name):
             raise ValueError("profile name: letters, digits, - or _ (max 32)")
-        overlay: dict[str, Any] = read_overlay(self.config)
-        section = cast("dict[str, Any] | None", overlay.get("profiles"))
-        existing = cast("dict[str, Any] | None", section.get(name)) if isinstance(section, dict) else None
+        existing = self.store.get_profile(name)
 
         clean = validate_provider_fields(updates)
         if clean.get("api_key") == "":
@@ -337,38 +338,39 @@ class WebService:
             for key, value in {**dict(existing or {}), **clean}.items()
             if value is not None
         }
-        save_profile(self.config, name, merged)
+        merged["name"] = name
+        _ = self.store.upsert_profile(merged)
         if mark_active:
-            set_active_profile(self.config, name)
+            self.store.set_settings({"active_profile": json.dumps(name)})
         return self.profiles()
 
     def apply_profile(self, name: str) -> dict[str, Any]:
         """Copy a profile into the active provider. Absent fields keep theirs."""
-        overlay: dict[str, Any] = read_overlay(self.config)
-        section = cast("dict[str, Any] | None", overlay.get("profiles"))
-        profile = cast("dict[str, Any] | None", section.get(name)) if isinstance(section, dict) else None
-        if not isinstance(profile, dict):
+        profile = self.store.get_profile(name)
+        if profile is None:
             raise KeyError(name)
 
         clean = validate_provider_fields(profile)
         clean = {
             key: value
             for key, value in clean.items()
-            if key not in self.config.env_overrides  # env beats any file
+            if key not in self.config.env_overrides  # env beats the database
         }
         for key, value in clean.items():
             setattr(self.config, key, value)
         if clean:
-            save_overlay(self.config, "provider", clean)
-        set_active_profile(self.config, name)
+            persist_stored(self.config, self.store, clean)
+        self.store.set_settings({"active_profile": json.dumps(name)})
 
         payload: dict[str, Any] = {"type": "provider", **self.provider_settings()}
         self.events.publish(payload)
         return self.provider_settings()
 
     def delete_profile(self, name: str) -> dict[str, Any]:
-        if not delete_profile(self.config, name):
+        if not self.store.delete_profile(name):
             raise KeyError(name)
+        if self._active_profile() == name:
+            self.store.set_settings({"active_profile": ""})
         return self.profiles()
 
     async def probe_provider(self) -> dict[str, Any]:

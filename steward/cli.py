@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from steward import __version__
-from steward.config import PERMISSION_MODES, Config, describe, load
+from steward.config import PERMISSION_MODES, Config, apply_stored, describe, load, migrate_files
 from steward.core.events import (
     AgentEvent,
     Notice,
@@ -80,7 +80,6 @@ def build_parser() -> argparse.ArgumentParser:
         description="A small, auditable personal agent.",
     )
     parser.add_argument("--version", action="version", version=f"steward {__version__}")
-    parser.add_argument("--config", help="path to config.toml (default: ./config.toml)")
     sub = parser.add_subparsers(dest="command")
 
     chat = sub.add_parser("chat", help="start a conversation (default command)")
@@ -109,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
-        config = load(args.config)
+        config = load()
     except Exception as exc:  # noqa: BLE001 - config problems are user-facing
         print(f"config error: {exc}", file=sys.stderr)
         return 1
@@ -229,12 +228,17 @@ def _cmd_web(config: Config, args: argparse.Namespace) -> int:
         print(f"cannot start the web server: {exc}", file=sys.stderr)
         return 1
 
+    # One-time import of the old config.toml / settings.toml, if any. The
+    # service itself never reads files, so tests stay hermetic.
+    store = SessionStore(config.db_path)
+    migrate_files(config, store)
+    _ = apply_stored(config, store)
+    created = ensure_default_user(store)
+    store.close()
+
     print(f"steward {__version__}")
     print(f"  {describe(config)}")
 
-    store = SessionStore(config.db_path)
-    created = ensure_default_user(store)
-    store.close()
     if created is not None:
         username, password = created
         print(f"  account {username} / {password}")

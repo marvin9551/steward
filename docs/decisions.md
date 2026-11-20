@@ -211,3 +211,25 @@ four rungs where two of them were identical.
 **Cost:** the default mode now interrupts on every write. `--yes` /
 `auto_approve` and the web approval card's "always" decision are the escape
 hatches; the web page's mode dropdown lists three entries instead of four.
+
+## 16. All editable config lives in SQLite
+
+**Decision:** provider settings, the permission mode and named profiles are
+rows in the `settings` and `provider_profiles` tables of `steward.db`. The
+hand-edited `config.toml` and the page-managed `settings.toml` overlay are
+gone; a first web start migrates whatever they still contain into the
+database, then the files are ignored. Outside the database only the
+database *location* (`STEWARD_DATA_DIR`) and deliberate `STEWARD_*` env pins
+remain — and an env pin locks its field in the settings dialog.
+
+**Why:** the file layer gave one value three places to live, and they could
+disagree: config.toml, the overlay, the environment — plus a fourth voice
+for profiles. That produced real confusion ("the page says this field is
+locked, which file pins it?"). One table means what the page shows is
+exactly what is stored, edits are single-row upserts, and backup is the one
+db file. The migration keeps existing deployments' keys and profiles.
+
+**Cost:** a hand-edited config.toml no longer works (the CLI `--config` flag
+is gone); anything you want pinned forever must be an env var, and the page
+will show it as locked. Corrupt rows in the settings table are skipped, not
+fatal.
