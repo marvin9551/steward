@@ -325,7 +325,7 @@ export function useSteward() {
       const settings = await api.applyProfile(name)
       setProvider(settings)
       void refreshProfiles()
-      setNote(`已切换到档案 ${name}，下一次模型调用生效`)
+      setNote(`已切换到预设 ${name}，下一次模型调用生效`)
       return settings
     },
     [refreshProfiles],

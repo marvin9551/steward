@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import {
   FileClock,
+  Info,
   KeyRound,
+  Layers,
   Loader2,
   Plug,
   PlugZap,
@@ -17,6 +19,7 @@ import type {
   ProviderProbe,
   ProviderSettings,
   ProviderUpdate,
+  Status,
 } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -45,6 +48,7 @@ interface Props {
   provider: ProviderSettings | null
   profiles: Profiles
   user: string
+  status: Status | null
   onSave: (update: ProviderUpdate) => Promise<ProviderSettings>
   onTest: () => Promise<ProviderProbe>
   onSyncModels: (base_url?: string, api_key?: string) => Promise<ModelSyncResult>
@@ -113,7 +117,14 @@ const PRESETS: Array<{
 
 const EMPTY_PROBE: ProviderProbe = { ok: false, error: '' }
 
-type Section = 'provider' | 'profiles' | 'account'
+type Section = 'provider' | 'profiles' | 'account' | 'about'
+
+const SECTIONS: Array<{ id: Section; label: string; icon: typeof Plug }> = [
+  { id: 'provider', label: '供应商', icon: Plug },
+  { id: 'profiles', label: '供应商预设', icon: Layers },
+  { id: 'account', label: '账号', icon: KeyRound },
+  { id: 'about', label: '关于', icon: Info },
+]
 
 /**
  * The settings dialog, opened from the sidebar's bottom-left button. Two
@@ -128,6 +139,7 @@ export function SettingsDialog({
   provider,
   profiles,
   user,
+  status,
   onSave,
   onTest,
   onSyncModels,
@@ -200,7 +212,7 @@ export function SettingsDialog({
       onOpenChange(false)
       onNote(
         name
-          ? `Provider 设置与档案 ${name} 已保存，下一次模型调用生效`
+          ? `Provider 设置与预设 ${name} 已保存，下一次模型调用生效`
           : 'Provider 设置已保存，下一次模型调用生效',
       )
     } catch (cause) {
@@ -255,7 +267,7 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-xl overflow-y-auto">
+      <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
         <DialogHeader>
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary">
@@ -267,34 +279,38 @@ export function SettingsDialog({
           </div>
         </DialogHeader>
 
-        <div className="flex w-fit rounded-lg bg-secondary p-0.5">
-          <SectionButton active={section === 'provider'} onClick={() => setSection('provider')}>
-            模型与供应商
-          </SectionButton>
-          <SectionButton active={section === 'profiles'} onClick={() => setSection('profiles')}>
-            档案 {profiles.profiles.length > 0 ? profiles.profiles.length : ''}
-          </SectionButton>
-          <SectionButton active={section === 'account'} onClick={() => setSection('account')}>
-            账号
-          </SectionButton>
-        </div>
+        <div className="grid min-h-0 flex-1 grid-cols-[190px_1fr] gap-6 overflow-hidden">
+          <nav className="flex flex-col gap-1">
+            {SECTIONS.map((item) => (
+              <SectionButton
+                key={item.id}
+                active={section === item.id}
+                icon={item.icon}
+                badge={item.id === 'profiles' && profiles.profiles.length > 0 ? profiles.profiles.length : undefined}
+                onClick={() => setSection(item.id)}
+              >
+                {item.label}
+              </SectionButton>
+            ))}
+          </nav>
 
-        {section === 'provider' ? (
-          <>
-            {provider === null ? (
-              <p className="rounded-md border border-border border-l-4 border-l-brand bg-brand-soft px-3 py-2 text-[17px] text-foreground">
-                后端还没有 /api/provider——正在运行的 <code className="font-mono text-[16px]">steward web</code>{' '}
-                是旧版本。重启进程（终端 Ctrl-C 后重新执行，VS Code 按 ⇧⌘F5）后再来配置。
-              </p>
-            ) : null}
+          <div className="min-h-0 space-y-4 overflow-y-auto pr-1 pb-1">
+            {section === 'provider' ? (
+              <>
+                {provider === null ? (
+                  <p className="rounded-md border border-border border-l-4 border-l-brand bg-brand-soft px-3 py-2 text-[17px] text-foreground">
+                    后端还没有 /api/provider——正在运行的 <code className="font-mono text-[16px]">steward web</code>{' '}
+                    是旧版本。重启进程（终端 Ctrl-C 后重新执行，VS Code 按 ⇧⌘F5）后再来配置。
+                  </p>
+                ) : null}
 
-            <div className="grid gap-4">
-              <div className="grid gap-1.5">
-                <Label>预设</Label>
-                <Select value={preset} onValueChange={applyPreset}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                <div className="grid gap-4">
+                  <div className="grid gap-1.5">
+                    <Label>快速填入</Label>
+                    <Select value={preset} onValueChange={applyPreset}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                   <SelectContent>
                     {PRESETS.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
@@ -433,9 +449,9 @@ export function SettingsDialog({
 
               <div className="grid gap-1.5">
                 <div className="flex items-baseline justify-between">
-                  <Label>另存为档案（可选）</Label>
+                  <Label>另存为预设（可选）</Label>
                   <span className="text-[15px] text-muted-foreground">
-                    保存后可在「档案」里一键切换
+                    保存后可在「供应商预设」里一键切换
                   </span>
                 </div>
                 <Input
@@ -472,41 +488,111 @@ export function SettingsDialog({
                 保存
               </Button>
             </DialogFooter>
-          </>
-        ) : section === 'account' ? (
-          <AccountSection user={user} onChange={onChangePassword} onDone={onNote} />
-        ) : (
-          <div className="grid gap-3">
-            {profiles.profiles.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border bg-secondary/40 px-6 py-5 text-[18px] leading-relaxed text-muted-foreground">
-                还没有档案。在「模型与供应商」里填好 base_url / key / 模型后，在底部
-                「另存为档案」里填个名字（如 <code className="font-mono text-[16px] text-foreground">opencode-go</code>）
-                再保存，这里就会出现一张可一键切换的卡片。
-              </div>
+              </>
+            ) : section === 'account' ? (
+              <AccountSection user={user} onChange={onChangePassword} onDone={onNote} />
+            ) : section === 'about' ? (
+              <AboutSection status={status} />
             ) : (
-              profiles.profiles.map((row) => (
-                <ProfileCard
-                  key={row.name}
-                  row={row}
-                  active={profiles.active === row.name}
-                  onApply={() => onApplyProfile(row.name)}
-                  onDelete={() => onDeleteProfile(row.name)}
-                />
-              ))
+              <div className="grid gap-3">
+                {profiles.profiles.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-border bg-secondary/40 px-6 py-5 text-[18px] leading-relaxed text-muted-foreground">
+                    还没有供应商预设。在「供应商」里填好 base_url / key / 模型后，在底部
+                    「另存为预设」里填个名字（如 <code className="font-mono text-[16px] text-foreground">opencode-go</code>）
+                    再保存，这里就会出现一张可一键切换的卡片。
+                  </div>
+                ) : (
+                  profiles.profiles.map((row) => (
+                    <ProfileCard
+                      key={row.name}
+                      row={row}
+                      active={profiles.active === row.name}
+                      onApply={() => onApplyProfile(row.name)}
+                      onDelete={() => onDeleteProfile(row.name)}
+                    />
+                  ))
+                )}
+              </div>
             )}
           </div>
-        )}
+        </div>
       </DialogContent>
     </Dialog>
   )
 }
 
+function AboutSection({ status }: { status: Status | null }) {
+  return (
+    <div className="grid gap-4">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
+          <span className="text-[18px] font-bold text-primary-foreground">s</span>
+        </div>
+        <div>
+          <p className="text-[19px] font-semibold text-foreground">steward</p>
+          <p className="text-[16px] text-muted-foreground">
+            小型、可通读的个人助理{status ? ` · v${status.version}` : ''}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-x-8 gap-y-3 rounded-xl bg-secondary/50 px-5 py-4 sm:grid-cols-2">
+        <AboutRow label="当前模型" value={status?.model} mono />
+        <AboutRow label="服务地址" value={status?.base_url} mono />
+        <AboutRow label="工作区" value={status?.workspace} mono />
+        <AboutRow
+          label="API Key"
+          value={status ? (status.has_api_key ? '已配置' : '未配置') : undefined}
+          tone={status && !status.has_api_key ? 'warning' : undefined}
+        />
+        <AboutRow label="权限模式" value={status?.permission} mono />
+      </div>
+
+      <p className="text-[15px] leading-relaxed text-muted-foreground">
+        配置保存在本地数据库 steward.db 中，key 只写不读；工作区之外的访问会被拒绝，
+        但这不是沙箱——shell 命令仍以你的用户身份运行。
+      </p>
+    </div>
+  )
+}
+
+function AboutRow({
+  label,
+  value,
+  mono,
+  tone,
+}: {
+  label: string
+  value: string | undefined
+  mono?: boolean
+  tone?: 'warning'
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[15px] text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          'break-all text-[17px]',
+          mono && 'font-mono',
+          tone === 'warning' ? 'text-brand' : 'text-foreground',
+        )}
+      >
+        {value || '—'}
+      </span>
+    </div>
+  )
+}
+
 function SectionButton({
   active,
+  icon: Icon,
+  badge,
   onClick,
   children,
 }: {
   active: boolean
+  icon: typeof Plug
+  badge?: number
   onClick: () => void
   children: React.ReactNode
 }) {
@@ -515,11 +601,15 @@ function SectionButton({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-[16px] font-semibold transition-colors',
-        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+        'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[17px] font-medium transition-colors',
+        active
+          ? 'bg-secondary text-foreground'
+          : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground',
       )}
     >
-      {children}
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="min-w-0 flex-1 text-left">{children}</span>
+      {badge ? <Badge variant="info">{badge}</Badge> : null}
     </button>
   )
 }

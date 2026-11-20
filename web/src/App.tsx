@@ -92,6 +92,7 @@ export default function App() {
             provider={steward.provider}
             profiles={steward.profiles}
             user={steward.user}
+            status={steward.status}
             onSave={steward.saveProvider}
             onTest={steward.testProvider}
             onSyncModels={steward.syncModels}
