@@ -165,6 +165,13 @@ class FeishuChannel:
             return False
         if lark is None:
             self.error = "未安装 lark-oapi：pip install -e '.[feishu]'"
+            self.service.store.append_log(
+                "ERROR",
+                "channel",
+                "feishu.start",
+                self.error,
+                detail={"app_id": config.feishu_app_id},
+            )
             return False
 
         def handle_message(data: Any) -> None:
@@ -173,6 +180,13 @@ class FeishuChannel:
                 self._schedule_inbound(event.get("message") or {}, event.get("sender") or {})
             except Exception as exc:  # noqa: BLE001 - the ws thread must survive
                 self.error = f"message handler: {exc}"
+                self.service.store.append_log(
+                    "ERROR",
+                    "channel",
+                    "feishu.error",
+                    f"飞书消息处理异常：{exc}",
+                    detail={"error": str(exc)},
+                )
 
         def handle_card_action(data: Any) -> Any:
             try:
@@ -183,6 +197,13 @@ class FeishuChannel:
                 )
             except Exception as exc:  # noqa: BLE001
                 self.error = f"card handler: {exc}"
+                self.service.store.append_log(
+                    "ERROR",
+                    "channel",
+                    "feishu.card_action",
+                    f"飞书卡片回调处理异常：{exc}",
+                    detail={"error": str(exc)},
+                )
                 return _card_action_response(
                     {"toast": {"type": "error", "content": "处理失败，请在网页里操作"}}
                 )
@@ -210,12 +231,26 @@ class FeishuChannel:
                     self._stop.wait(WS_RETRY_SECONDS)
                 except Exception as exc:  # noqa: BLE001 - reconnect below
                     self.error = f"connection: {exc}"
+                    self.service.store.append_log(
+                        "ERROR",
+                        "channel",
+                        "feishu.error",
+                        f"飞书长连接断开，{WS_RETRY_SECONDS}s 后重试：{exc}",
+                        detail={"error": str(exc)},
+                    )
                     if self._stop.wait(WS_RETRY_SECONDS):
                         return
 
         threading.Thread(target=ws_loop, daemon=True, name="steward-feishu-ws").start()
         self.running = True
         self.error = ""
+        self.service.store.append_log(
+            "INFO",
+            "channel",
+            "feishu.start",
+            f"飞书长连接已启动（app_id={config.feishu_app_id}）",
+            detail={"app_id": config.feishu_app_id},
+        )
         return True
 
     # -- inbound --------------------------------------------------------
@@ -233,6 +268,19 @@ class FeishuChannel:
         ids = cast(dict[str, Any], raw_ids) if isinstance(raw_ids, dict) else {}
         sender_id = str(ids.get("open_id") or "")
         session_id = session_id_for(chat_type, chat_id, sender_id)
+        self.service.store.append_log(
+            "INFO",
+            "channel",
+            "feishu.inbound",
+            f"收到飞书消息：{' '.join(text.split())[:100]}",
+            session_id=session_id,
+            detail={
+                "chat_id": chat_id,
+                "chat_type": chat_type,
+                "sender_open_id": sender_id,
+                "text_preview": text[:200],
+            },
+        )
         coroutine = self._run_turn(session_id, chat_id, text)
         asyncio.run_coroutine_threadsafe(coroutine, self.service.loop)
 
@@ -265,16 +313,32 @@ class FeishuChannel:
         approval = self.service.create_approval(name, args)
         self._send_card(chat_id, approval_card(name, dict(args), approval.id))
         decision = await self.service.approvals.wait(approval.id, APPROVAL_TIMEOUT)
+        resolved = decision or "deny"
         self.service.publish(
             {
                 "type": "approval_resolved",
                 "id": approval.id,
-                "decision": decision or "deny",
+                "decision": resolved,
             }
+        )
+        allowed = decision in (DECISION_ONCE, DECISION_ALWAYS)
+        self.service.store.append_log(
+            "INFO" if allowed else "WARN",
+            "tool",
+            "tool.approval",
+            f"飞书审批工具 {name}：{resolved}",
+            detail={
+                "approval_id": approval.id,
+                "chat_id": chat_id,
+                "name": name,
+                "decision": resolved,
+                "allowed": allowed,
+                "args": args,
+            },
         )
         if decision == DECISION_ALWAYS:
             self.service.remember_always_allowed(name)
-        return decision in (DECISION_ONCE, DECISION_ALWAYS)
+        return allowed
 
     def _resolve_card_action(self, event: dict[str, Any]) -> None:
         """A button click arrives on the ws thread; resolve on the loop."""
@@ -283,6 +347,13 @@ class FeishuChannel:
         approval_id = str(value.get("approval_id") or "")
         decision = str(value.get("decision") or "")
         if approval_id and decision:
+            self.service.store.append_log(
+                "INFO",
+                "channel",
+                "feishu.card_action",
+                f"收到飞书审批卡片点击（id={approval_id}, decision={decision}）",
+                detail={"approval_id": approval_id, "decision": decision},
+            )
 
             async def resolve() -> bool:
                 return self.service.resolve_approval(approval_id, decision)
@@ -322,10 +393,38 @@ class FeishuChannel:
         )
         if not response.headers.get("content-type", "").startswith("application/json"):
             self.error = f"send failed: HTTP {response.status_code}"
+            self.service.store.append_log(
+                "ERROR",
+                "channel",
+                "feishu.error",
+                f"飞书消息发送失败：HTTP {response.status_code}",
+                detail={"chat_id": chat_id, "msg_type": msg_type, "status_code": response.status_code},
+            )
             return
         payload = cast(dict[str, Any], response.json())
         if response.status_code >= 400 or payload.get("code") not in (0, None):
             self.error = f"send failed: HTTP {response.status_code} {payload.get('msg', '')}"
+            self.service.store.append_log(
+                "ERROR",
+                "channel",
+                "feishu.error",
+                f"飞书消息发送失败：HTTP {response.status_code} {payload.get('msg', '')}",
+                detail={
+                    "chat_id": chat_id,
+                    "msg_type": msg_type,
+                    "status_code": response.status_code,
+                    "code": payload.get("code"),
+                    "msg": payload.get("msg"),
+                },
+            )
+            return
+        self.service.store.append_log(
+            "INFO",
+            "channel",
+            "feishu.outbound",
+            f"飞书消息已发送（type={msg_type}）",
+            detail={"chat_id": chat_id, "msg_type": msg_type},
+        )
 
     def _tenant_token(self) -> str:
         """App credential token, cached until shortly before it expires."""
@@ -344,6 +443,13 @@ class FeishuChannel:
         token = str(payload.get("tenant_access_token") or "")
         if not token:
             self.error = f"token failed: {payload.get('msg', '')}"
+            self.service.store.append_log(
+                "ERROR",
+                "channel",
+                "feishu.error",
+                f"获取飞书 tenant_access_token 失败：{payload.get('msg', '')}",
+                detail={"code": payload.get("code"), "msg": payload.get("msg")},
+            )
             return self._token
         self._token = token
         self._token_expires_at = now + float(payload.get("expire", 7200)) - TOKEN_REFRESH_MARGIN

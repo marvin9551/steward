@@ -12,6 +12,7 @@ which is how the same loop will drive a web UI later.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeAlias
 
@@ -65,7 +66,21 @@ class Runner:
         self._emit(event)
 
     async def run_turn(self, session_id: str, user_text: str) -> str:
+        turn_started = time.monotonic()
         self.store.append(session_id, "user", {"content": user_text})
+        preview = " ".join(user_text.split())[:160]
+        self.store.append_log(
+            "INFO",
+            "agent",
+            "turn.start",
+            f"开始对话轮次：{preview}",
+            session_id=session_id,
+            detail={
+                "model": self.config.model,
+                "permission": self.config.permission,
+                "user_text_preview": user_text[:300],
+            },
+        )
         usage: dict[str, int] = {}
 
         for step in range(1, self.config.max_steps + 1):
@@ -94,18 +109,43 @@ class Runner:
             )
 
             if not tool_calls:
+                duration_ms = int((time.monotonic() - turn_started) * 1000)
+                self.store.append_log(
+                    "INFO",
+                    "agent",
+                    "turn.done",
+                    f"对话轮次完成（{step} 步，{duration_ms}ms）",
+                    session_id=session_id,
+                    detail={
+                        "steps": step,
+                        "duration_ms": duration_ms,
+                        "usage": usage,
+                        "reply_length": len(result.text),
+                    },
+                )
                 self.emit(TurnDone(text=result.text, steps=step, usage=usage))
                 return result.text
 
             for call in tool_calls:
                 await self._run_tool_call(session_id, call)
 
+        duration_ms = int((time.monotonic() - turn_started) * 1000)
+        self.store.append_log(
+            "WARN",
+            "agent",
+            "turn.max_steps",
+            f"达到最大步数限制 max_steps={self.config.max_steps}",
+            session_id=session_id,
+            detail={"max_steps": self.config.max_steps, "duration_ms": duration_ms, "usage": usage},
+        )
         self.emit(Notice(f"stopped: reached max_steps={self.config.max_steps}"))
         return "(stopped: step budget exhausted)"
 
     async def _run_tool_call(self, session_id: str, call: dict[str, Any]) -> None:
+        tool_started = time.monotonic()
         function = call["function"]
         name: str = function["name"]
+        call_id: str = str(call.get("id") or "")
         raw_args: str = function.get("arguments") or ""
 
         try:
@@ -121,21 +161,45 @@ class Runner:
         else:
             output = f"ERROR: tool arguments were not valid JSON: {raw_args[:200]}"
 
+        self.store.append_log(
+            "INFO",
+            "tool",
+            "tool.call",
+            f"调用工具 {name}",
+            session_id=session_id,
+            detail={"call_id": call_id, "name": name, "args": args},
+        )
         self.emit(ToolCallEvent(name=name, args=args))
 
         if output is None:
             output = await self._authorize_and_execute(name, args)
 
+        ok = not output.startswith("ERROR:")
+        duration_ms = int((time.monotonic() - tool_started) * 1000)
         self.store.append(
             session_id,
             "tool",
             {"tool_call_id": call["id"], "name": name, "content": output},
         )
+        self.store.append_log(
+            "INFO" if ok else "ERROR",
+            "tool",
+            "tool.result",
+            f"工具 {name} {'执行成功' if ok else '执行失败'}（{duration_ms}ms）",
+            session_id=session_id,
+            detail={
+                "call_id": call_id,
+                "name": name,
+                "ok": ok,
+                "duration_ms": duration_ms,
+                "output_preview": output[:500],
+            },
+        )
         self.emit(
             ToolResultEvent(
                 name=name,
                 output=output,
-                ok=not output.startswith("ERROR:"),
+                ok=ok,
             )
         )
 

@@ -59,7 +59,41 @@ CREATE TABLE IF NOT EXISTS provider_profiles (
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
 );
+CREATE TABLE IF NOT EXISTS logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT    NOT NULL,
+    level       TEXT    NOT NULL,
+    category    TEXT    NOT NULL,
+    event       TEXT    NOT NULL,
+    session_id  TEXT    NOT NULL DEFAULT '',
+    message     TEXT    NOT NULL,
+    detail      TEXT    NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_logs_id_desc
+    ON logs(id DESC);
+CREATE INDEX IF NOT EXISTS ix_logs_filter
+    ON logs(category, level, session_id, id DESC);
 """
+
+MAX_LOG_ROWS = 10_000
+_SENSITIVE_MARKERS = ("api_key", "secret", "password", "token", "authorization")
+
+
+def _redact_detail(value: Any) -> Any:
+    """Recursively mask sensitive keys before persisting log details."""
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for k, v in cast(dict[str, Any], value).items():
+            key_str = str(k)
+            lowered = key_str.lower()
+            if any(marker in lowered for marker in _SENSITIVE_MARKERS):
+                result[key_str] = "***"
+            else:
+                result[key_str] = _redact_detail(v)
+        return result
+    if isinstance(value, list):
+        return [_redact_detail(item) for item in cast(list[Any], value)]
+    return value
 
 
 class SessionStore:
@@ -241,6 +275,116 @@ class SessionStore:
                 "DELETE FROM provider_profiles WHERE name = ?", (name,)
             )
         return cursor.rowcount > 0
+
+    # -- logs -----------------------------------------------------------
+
+    def append_log(
+        self,
+        level: str,
+        category: str,
+        event: str,
+        message: str,
+        *,
+        session_id: str = "",
+        detail: dict[str, Any] | None = None,
+    ) -> int:
+        safe_detail = _redact_detail(detail or {})
+        detail_json = json.dumps(safe_detail, ensure_ascii=False, default=str)
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO logs(created_at, level, category, event, session_id, message, detail) "
+                "VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)",
+                (
+                    level.upper(),
+                    category,
+                    event,
+                    session_id,
+                    message,
+                    detail_json,
+                ),
+            )
+            log_id = int(cursor.lastrowid or 0)
+            if log_id % 100 == 0:
+                self._conn.execute(
+                    "DELETE FROM logs WHERE id <= ("
+                    "SELECT id FROM logs ORDER BY id DESC LIMIT 1 OFFSET ?"
+                    ")",
+                    (MAX_LOG_ROWS,),
+                )
+        return log_id
+
+    def query_logs(
+        self,
+        *,
+        level: str = "",
+        category: str = "",
+        session_id: str = "",
+        query: str = "",
+        before_id: int | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        capped = max(1, min(int(limit), 500))
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        if level.strip():
+            clauses.append("level = ?")
+            params.append(level.strip().upper())
+        if category.strip():
+            clauses.append("category = ?")
+            params.append(category.strip())
+        if session_id.strip():
+            clauses.append("session_id LIKE ?")
+            params.append(f"%{session_id.strip()}%")
+        if query.strip():
+            like = f"%{query.strip()}%"
+            clauses.append(
+                "(message LIKE ? OR event LIKE ? OR detail LIKE ? OR session_id LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+        if before_id is not None:
+            clauses.append("id < ?")
+            params.append(int(before_id))
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = (
+            "SELECT id, created_at, level, category, event, session_id, message, detail "
+            f"FROM logs {where_sql} ORDER BY id DESC LIMIT ?"
+        )
+        params.append(capped + 1)
+
+        with self._lock:
+            rows = self._conn.execute(sql, tuple(params)).fetchall()
+
+        has_more = len(rows) > capped
+        sliced = rows[:capped]
+        items: list[dict[str, Any]] = []
+        for row in sliced:
+            raw_detail = str(row["detail"] or "{}")
+            try:
+                parsed_detail: Any = json.loads(raw_detail)
+            except ValueError:
+                parsed_detail = {"_raw": raw_detail}
+            if not isinstance(parsed_detail, dict):
+                parsed_detail = {"_raw": parsed_detail}
+            items.append(
+                {
+                    "id": int(row["id"]),
+                    "created_at": str(row["created_at"]),
+                    "level": str(row["level"]),
+                    "category": str(row["category"]),
+                    "event": str(row["event"]),
+                    "session_id": str(row["session_id"]),
+                    "message": str(row["message"]),
+                    "detail": cast(dict[str, Any], parsed_detail),
+                }
+            )
+        return {"logs": items, "has_more": has_more}
+
+    def clear_logs(self) -> int:
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM logs")
+        return max(0, int(cursor.rowcount))
 
     # -- helpers --------------------------------------------------------
 

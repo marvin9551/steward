@@ -170,14 +170,40 @@ class WebService:
         now = time.monotonic()
         count, locked_until = self._login_failures.get(username, (0, 0.0))
         if locked_until > now:
+            self.store.append_log(
+                "WARN",
+                "system",
+                "auth.locked",
+                f"账号 {username} 登录处于锁定期，拒绝尝试",
+                detail={"username": username, "failures": count},
+            )
             raise ValueError("尝试次数过多，请稍后再试")
         user = self.store.get_user(username)
         if user is None or not verify_password(password, str(user["password_hash"])):
             count += 1
             lock = (count, now + LOGIN_LOCK_SECONDS) if count >= LOGIN_MAX_FAILURES else (count, 0.0)
             self._login_failures[username] = lock
+            self.store.append_log(
+                "WARN",
+                "system",
+                "auth.login",
+                f"账号 {username} 登录失败（第 {count} 次）",
+                detail={
+                    "username": username,
+                    "ok": False,
+                    "failures": count,
+                    "locked": count >= LOGIN_MAX_FAILURES,
+                },
+            )
             raise ValueError("用户名或密码不正确")
         self._login_failures.pop(username, None)
+        self.store.append_log(
+            "INFO",
+            "system",
+            "auth.login",
+            f"账号 {username} 登录成功",
+            detail={"username": username, "ok": True},
+        )
         return make_token(username, self._secret)
 
     def change_password(self, username: str, current: str, new: str) -> None:
@@ -187,6 +213,13 @@ class WebService:
         if len(new) < MIN_PASSWORD_LENGTH:
             raise ValueError(f"新密码至少需要 {MIN_PASSWORD_LENGTH} 个字符")
         _ = self.store.update_password(username, hash_password(new))
+        self.store.append_log(
+            "INFO",
+            "system",
+            "auth.password_changed",
+            f"账号 {username} 修改了密码",
+            detail={"username": username},
+        )
 
     # -- lifecycle ------------------------------------------------------
 
@@ -268,6 +301,13 @@ class WebService:
             raise ValueError("permission is set by STEWARD_PERMISSION and cannot be changed here")
         self.config.permission = mode
         persist_stored(self.config, self.store, {"permission": mode})
+        self.store.append_log(
+            "INFO",
+            "system",
+            "config.permission",
+            f"权限模式切换为 {mode}",
+            detail={"permission": mode},
+        )
         self.events.publish({"type": "config", "permission": mode})
         return mode
 
@@ -294,6 +334,19 @@ class WebService:
             setattr(self.config, name, value)
         if clean:
             persist_stored(self.config, self.store, clean)
+            self.store.append_log(
+                "INFO",
+                "system",
+                "config.provider",
+                f"更新供应商配置（model={self.config.model}）",
+                detail={
+                    "base_url": self.config.base_url,
+                    "model": self.config.model,
+                    "temperature": self.config.temperature,
+                    "stream_usage": self.config.stream_usage,
+                    "api_key_updated": "api_key" in clean,
+                },
+            )
 
         payload: dict[str, Any] = {"type": "provider", **self.provider_settings()}
         self.events.publish(payload)
@@ -351,6 +404,18 @@ class WebService:
         _ = self.store.upsert_profile(merged)
         if mark_active:
             self.store.set_settings({"active_profile": json.dumps(name)})
+        self.store.append_log(
+            "INFO",
+            "system",
+            "config.provider",
+            f"保存供应商预设 {name}",
+            detail={
+                "profile": name,
+                "base_url": merged.get("base_url") or "",
+                "model": merged.get("model") or "",
+                "mark_active": mark_active,
+            },
+        )
         return self.profiles()
 
     def apply_profile(self, name: str) -> dict[str, Any]:
@@ -370,6 +435,13 @@ class WebService:
         if clean:
             persist_stored(self.config, self.store, clean)
         self.store.set_settings({"active_profile": json.dumps(name)})
+        self.store.append_log(
+            "INFO",
+            "system",
+            "config.provider",
+            f"切换到供应商预设 {name}（model={self.config.model}）",
+            detail={"profile": name, "base_url": self.config.base_url, "model": self.config.model},
+        )
 
         payload: dict[str, Any] = {"type": "provider", **self.provider_settings()}
         self.events.publish(payload)
@@ -380,7 +452,38 @@ class WebService:
             raise KeyError(name)
         if self._active_profile() == name:
             self.store.set_settings({"active_profile": ""})
+        self.store.append_log(
+            "INFO",
+            "system",
+            "config.provider",
+            f"删除供应商预设 {name}",
+            detail={"profile": name},
+        )
         return self.profiles()
+
+    # -- logs -----------------------------------------------------------
+
+    def query_logs(
+        self,
+        *,
+        level: str = "",
+        category: str = "",
+        session_id: str = "",
+        query: str = "",
+        before_id: int | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self.store.query_logs(
+            level=level,
+            category=category,
+            session_id=session_id,
+            query=query,
+            before_id=before_id,
+            limit=limit,
+        )
+
+    def clear_logs(self) -> int:
+        return self.store.clear_logs()
 
     async def probe_provider(self) -> dict[str, Any]:
         """One tiny real request, so a saved key is verified, not assumed."""
@@ -518,11 +621,34 @@ class WebService:
             )
             await runner.run_turn(session_id, text)
         except asyncio.CancelledError:
+            self.store.append_log(
+                "WARN",
+                "agent",
+                "turn.cancelled",
+                "对话轮次已取消",
+                session_id=session_id,
+            )
             self._publish({"type": "notice", "text": "cancelled"})
             raise
         except ProviderError as exc:
+            self.store.append_log(
+                "ERROR",
+                "agent",
+                "turn.error",
+                f"模型调用失败：{exc}",
+                session_id=session_id,
+                detail={"error_type": "ProviderError", "error": str(exc)},
+            )
             self._publish({"type": "error", "text": f"provider error: {exc}"})
         except Exception as exc:  # noqa: BLE001 - the page shows what broke
+            self.store.append_log(
+                "ERROR",
+                "agent",
+                "turn.error",
+                f"对话执行异常：{type(exc).__name__}: {exc}",
+                session_id=session_id,
+                detail={"error_type": type(exc).__name__, "error": str(exc)},
+            )
             self._publish({"type": "error", "text": f"{type(exc).__name__}: {exc}"})
         finally:
             self._busy_session = None
@@ -534,16 +660,32 @@ class WebService:
         approval = self.approvals.create(name, args)
         self._publish({"type": "approval_request", **approval.to_dict()})
         decision = await self.approvals.wait(approval.id, APPROVAL_TIMEOUT)
+        resolved = decision or DECISION_DENY
         self._publish(
             {
                 "type": "approval_resolved",
                 "id": approval.id,
-                "decision": decision or DECISION_DENY,
+                "decision": resolved,
             }
+        )
+        allowed = decision in (DECISION_ONCE, DECISION_ALWAYS)
+        self.store.append_log(
+            "INFO" if allowed else "WARN",
+            "tool",
+            "tool.approval",
+            f"工具 {name} 审批结果：{resolved}",
+            session_id=self._busy_session or "",
+            detail={
+                "approval_id": approval.id,
+                "name": name,
+                "decision": resolved,
+                "allowed": allowed,
+                "args": args,
+            },
         )
         if decision == DECISION_ALWAYS:
             self._always_allow.add(name)
-        return decision in (DECISION_ONCE, DECISION_ALWAYS)
+        return allowed
 
     def _emit_event(self, event: AgentEvent) -> None:
         """Adapter for the runner's `EventSink`, which discards the sequence id."""

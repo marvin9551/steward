@@ -229,12 +229,50 @@ def create_app(
             service.store,
             {"feishu_app_id": app_id, "feishu_app_secret": app_secret},
         )
+        service.store.append_log(
+            "INFO",
+            "system",
+            "config.feishu",
+            f"更新飞书渠道配置（app_id={app_id}）",
+            detail={"app_id": app_id},
+        )
         # The ws thread cannot be stopped from the outside, so a credential
         # change takes effect on the next process start — the status payload
         # says so instead of pretending it already reconnected.
         service.feishu_error = ""
         response.status_code = 200
         return {**service.feishu_status(), "restart_required": True}
+
+    # -- logs -----------------------------------------------------------
+
+    @app.get("/api/logs")
+    async def get_logs(
+        level: str = "",
+        category: str = "",
+        session_id: str = "",
+        q: str = "",
+        before_id: int | None = None,
+        limit: int = 100,
+        service: WebService = ServiceDep,
+        user: str = UserDep,
+    ) -> dict[str, Any]:
+        _ = user
+        return service.query_logs(
+            level=level,
+            category=category,
+            session_id=session_id,
+            query=q,
+            before_id=before_id,
+            limit=limit,
+        )
+
+    @app.delete("/api/logs")
+    async def delete_logs(
+        service: WebService = ServiceDep,
+        user: str = UserDep,
+    ) -> dict[str, Any]:
+        _ = user
+        return {"cleared": service.clear_logs()}
 
     # -- reads ----------------------------------------------------------
 

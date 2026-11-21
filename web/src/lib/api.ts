@@ -135,6 +135,34 @@ export interface FeishuChannelStatus {
   restart_required?: boolean
 }
 
+export type LogLevel = 'INFO' | 'WARN' | 'ERROR'
+export type LogCategory = 'agent' | 'tool' | 'channel' | 'system'
+
+export interface LogRow {
+  id: number
+  created_at: string
+  level: LogLevel
+  category: LogCategory
+  event: string
+  session_id: string
+  message: string
+  detail: Record<string, unknown>
+}
+
+export interface LogsQuery {
+  level?: string
+  category?: string
+  session_id?: string
+  q?: string
+  before_id?: number
+  limit?: number
+}
+
+export interface LogsResponse {
+  logs: LogRow[]
+  has_more: boolean
+}
+
 export const api = {
   login: (username: string, password: string) =>
     request<{ username: string }>('/api/login', {
@@ -220,4 +248,19 @@ export const api = {
 
   deleteProfile: (name: string) =>
     request<Profiles>(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+
+  logs: (query: LogsQuery = {}) => {
+    const params = new URLSearchParams()
+    if (query.level) params.set('level', query.level)
+    if (query.category) params.set('category', query.category)
+    if (query.session_id) params.set('session_id', query.session_id)
+    if (query.q) params.set('q', query.q)
+    if (query.before_id !== undefined) params.set('before_id', String(query.before_id))
+    if (query.limit !== undefined) params.set('limit', String(query.limit))
+    const qs = params.toString()
+    return request<LogsResponse>(`/api/logs${qs ? `?${qs}` : ''}`)
+  },
+
+  clearLogs: () =>
+    request<{ cleared: number }>('/api/logs', { method: 'DELETE' }),
 }

@@ -61,6 +61,74 @@ class TestSessionStore(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(self.store.messages("s1")), 80)
 
+    def test_append_and_query_logs_with_filters_and_redaction(self) -> None:
+        id1 = self.store.append_log(
+            "INFO",
+            "agent",
+            "turn.start",
+            "开始对话",
+            session_id="s-1",
+            detail={"model": "glm-5", "api_key": "sk-secret", "nested": {"app_secret": "sec-1"}},
+        )
+        id2 = self.store.append_log(
+            "ERROR",
+            "tool",
+            "tool.result",
+            "run_shell 执行失败",
+            session_id="s-1",
+            detail={"name": "run_shell", "ok": False},
+        )
+        id3 = self.store.append_log(
+            "WARN",
+            "system",
+            "auth.login",
+            "登录失败",
+            detail={"username": "admin", "password": "pw"},
+        )
+
+        self.assertLess(id1, id2)
+        self.assertLess(id2, id3)
+
+        all_res = self.store.query_logs()
+        self.assertFalse(all_res["has_more"])
+        logs = all_res["logs"]
+        self.assertEqual([item["id"] for item in logs], [id3, id2, id1])
+
+        # Verify sensitive fields are redacted
+        self.assertEqual(logs[0]["detail"]["password"], "***")
+        self.assertEqual(logs[2]["detail"]["api_key"], "***")
+        self.assertEqual(logs[2]["detail"]["nested"]["app_secret"], "***")
+
+        # Filter by level
+        err_res = self.store.query_logs(level="ERROR")
+        self.assertEqual([item["id"] for item in err_res["logs"]], [id2])
+
+        # Filter by category
+        cat_res = self.store.query_logs(category="agent")
+        self.assertEqual([item["id"] for item in cat_res["logs"]], [id1])
+
+        # Filter by session_id
+        sess_res = self.store.query_logs(session_id="s-1")
+        self.assertEqual([item["id"] for item in sess_res["logs"]], [id2, id1])
+
+        # Filter by keyword query
+        q_res = self.store.query_logs(query="run_shell")
+        self.assertEqual([item["id"] for item in q_res["logs"]], [id2])
+
+        # Cursor pagination with limit and before_id
+        page1 = self.store.query_logs(limit=2)
+        self.assertTrue(page1["has_more"])
+        self.assertEqual([item["id"] for item in page1["logs"]], [id3, id2])
+
+        page2 = self.store.query_logs(limit=2, before_id=id2)
+        self.assertFalse(page2["has_more"])
+        self.assertEqual([item["id"] for item in page2["logs"]], [id1])
+
+        # Clear logs
+        cleared = self.store.clear_logs()
+        self.assertEqual(cleared, 3)
+        self.assertEqual(self.store.query_logs()["logs"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

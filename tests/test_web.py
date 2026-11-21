@@ -123,6 +123,17 @@ class _WebServiceLike(Protocol):
     ) -> Payload: ...
     async def start_turn(self, session_id: str, text: str) -> str: ...
     def resolve_approval(self, approval_id: str, decision: str) -> bool: ...
+    def query_logs(
+        self,
+        *,
+        level: str = "",
+        category: str = "",
+        session_id: str = "",
+        query: str = "",
+        before_id: int | None = None,
+        limit: int = 100,
+    ) -> Payload: ...
+    def clear_logs(self) -> int: ...
 
 
 class _ClientLike(Protocol):
@@ -523,6 +534,39 @@ class TestWebService(ServiceTestCase):
         service = self.start(FakeProvider([]))
         with self.assertRaises(ValueError):
             _ = await service.start_turn(self.session_id, "   ")
+
+    async def test_turn_and_tool_execution_populate_structured_logs(self) -> None:
+        self.config.auto_approve = False
+        service = self.start(
+            FakeProvider(
+                [
+                    tool_call("write_file", {"path": "log.txt", "content": "ok"}),
+                    ProviderResult(text="written"),
+                ]
+            )
+        )
+
+        await service.start_turn(self.session_id, "write log.txt")
+        request = await self.wait_for_event("approval_request")
+        _ = service.resolve_approval(cast(str, request["id"]), "once")
+        self.assertTrue(await service.wait_idle(5))
+
+        res = service.query_logs(session_id=self.session_id)
+        logs = cast(list[Payload], res["logs"])
+        events = [item["event"] for item in logs]
+        self.assertIn("turn.start", events)
+        self.assertIn("tool.call", events)
+        self.assertIn("tool.approval", events)
+        self.assertIn("tool.result", events)
+        self.assertIn("turn.done", events)
+
+        tool_logs = cast(
+            list[Payload],
+            service.query_logs(category="tool", session_id=self.session_id)["logs"],
+        )
+        self.assertEqual(len(tool_logs), 3)
+        self.assertEqual(service.clear_logs(), len(logs))
+        self.assertEqual(service.query_logs()["logs"], [])
 
 
 class TestProviderSettings(ServiceTestCase):
@@ -1010,6 +1054,23 @@ class TestHttpSurface(unittest.TestCase):
         tool = [b for b in blocks if b["kind"] == "tool"][0]
         self.assertTrue(tool["ok"])
         self.assertIn("over-http", cast(str, tool["output"]))
+
+    def test_logs_endpoints_query_and_clear(self) -> None:
+        # Login in setUp already created an auth.login log; add a turn as well.
+        _ = self.client.post("/api/turn", json={"session": "s-log", "text": "hello"})
+        self.wait_idle()
+
+        all_res = _json(self.client.get("/api/logs"))
+        logs = cast(list[Payload], all_res["logs"])
+        self.assertGreaterEqual(len(logs), 3)
+
+        filtered = _json(self.client.get("/api/logs?category=agent&session_id=s-log"))
+        agent_logs = cast(list[Payload], filtered["logs"])
+        self.assertEqual([item["event"] for item in agent_logs], ["turn.done", "turn.start"])
+
+        cleared = _json(self.client.delete("/api/logs"))
+        self.assertGreaterEqual(cast(int, cleared["cleared"]), 3)
+        self.assertEqual(_json(self.client.get("/api/logs"))["logs"], [])
 
 
 if __name__ == "__main__":
