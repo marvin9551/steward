@@ -9,6 +9,7 @@ from typing import Any
 
 from steward.channel.feishu import (
     approval_card,
+    event_dict,
     extract_text,
     session_id_for,
     strip_mention_placeholder,
@@ -122,6 +123,36 @@ class TestServiceWiring(unittest.TestCase):
         self.assertFalse(status["configured"])
         self.assertFalse(status["running"])
         self.assertEqual(status["error"], "")
+
+    def test_event_dict_unwraps_p2_event_envelope(self) -> None:
+        from steward.channel import feishu as feishu_mod
+
+        if feishu_mod.lark is None:
+            self.skipTest("lark_oapi not installed")
+
+        from lark_oapi.api.im.v1.model.p2_im_message_receive_v1 import (  # type: ignore[import-untyped]
+            P2ImMessageReceiveV1,
+        )
+
+        raw = json.dumps(
+            {
+                "schema": "2.0",
+                "header": {"event_type": "im.message.receive_v1"},
+                "event": {
+                    "message": {
+                        "chat_id": "oc_123",
+                        "chat_type": "p2p",
+                        "message_type": "text",
+                        "content": json.dumps({"text": "你好"}),
+                    },
+                    "sender": {"sender_id": {"open_id": "ou_abc"}},
+                },
+            }
+        )
+        unmarshaled = getattr(feishu_mod.lark, "JSON").unmarshal(raw, P2ImMessageReceiveV1)  # noqa: B009
+        extracted = event_dict(unmarshaled)
+        self.assertEqual(extracted["message"]["chat_id"], "oc_123")
+        self.assertEqual(extract_text(extracted["message"]), "你好")
 
 
 if __name__ == "__main__":

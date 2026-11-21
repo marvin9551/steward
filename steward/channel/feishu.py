@@ -176,7 +176,7 @@ class FeishuChannel:
 
         def handle_message(data: Any) -> None:
             try:
-                event = _event_dict(data)
+                event = event_dict(data)
                 self._schedule_inbound(event.get("message") or {}, event.get("sender") or {})
             except Exception as exc:  # noqa: BLE001 - the ws thread must survive
                 self.error = f"message handler: {exc}"
@@ -190,7 +190,7 @@ class FeishuChannel:
 
         def handle_card_action(data: Any) -> Any:
             try:
-                event = _event_dict(data)
+                event = event_dict(data)
                 self._resolve_card_action(event)
                 return _card_action_response(
                     {"toast": {"type": "success", "content": "已记录"}}
@@ -472,11 +472,19 @@ class FeishuChannel:
         return self._token
 
 
-def _event_dict(data: Any) -> dict[str, Any]:
-    """lark hands typed models; marshal to a plain dict for uniform access."""
+def event_dict(data: Any) -> dict[str, Any]:
+    """lark hands typed P2 envelope models (`{"schema": "2.0", "header": ..., "event": {...}}`);
+    marshal to a plain dict and unwrap the inner `event` body for uniform access."""
     if lark is None:
         return {}
-    return json.loads(getattr(lark, "JSON").marshal(data))  # noqa: B009 - untyped SDK seam
+    raw: Any = json.loads(getattr(lark, "JSON").marshal(data))  # noqa: B009 - untyped SDK seam
+    if not isinstance(raw, dict):
+        return {}
+    envelope = cast(dict[str, Any], raw)
+    inner = envelope.get("event")
+    if isinstance(inner, dict):
+        return cast(dict[str, Any], inner)
+    return envelope
 
 
 def _card_action_response(payload: dict[str, Any]) -> Any:
