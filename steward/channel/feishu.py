@@ -215,13 +215,29 @@ class FeishuChannel:
             .register_p2_card_action_trigger(handle_card_action)
             .build()
         )
-        ws_client = getattr(lark, "ws").Client(  # noqa: B009 - untyped SDK seam
-            config.feishu_app_id,
-            config.feishu_app_secret,
-            event_handler=handler,
-        )
 
         def ws_loop() -> None:
+            # lark_oapi.ws.client binds a module-level `loop = asyncio.get_event_loop()`
+            # at import time. Because `steward.channel.feishu` is imported inside
+            # FastAPI's running lifespan coroutine, that module-level `loop`
+            # captures uvicorn's main event loop! Calling `ws_client.start()` on
+            # this worker thread would then call `loop.run_until_complete()` on
+            # the already-running uvicorn loop and raise:
+            # "RuntimeError: This event loop is already running".
+            # Giving this thread its own event loop and rebinding
+            # `lark_oapi.ws.client.loop` before constructing `Client` (whose
+            # `asyncio.Lock()` also binds to the current thread's loop) fixes it.
+            ws_event_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(ws_event_loop)
+            ws_client_mod = importlib.import_module("lark_oapi.ws.client")
+            setattr(ws_client_mod, "loop", ws_event_loop)  # noqa: B010 - untyped SDK seam
+
+            ws_client = getattr(lark, "ws").Client(  # noqa: B009 - untyped SDK seam
+                config.feishu_app_id,
+                config.feishu_app_secret,
+                event_handler=handler,
+            )
+
             # The SDK reconnects internally; a failed handshake raises out of
             # start(), so retry with a fixed delay. lark.ws has no stop() —
             # the daemon thread dies with the process.
