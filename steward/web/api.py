@@ -456,7 +456,7 @@ async def stream_events(
     reload from SQLite (`resync`) and continue from now, rather than replaying
     events it may already have.
     """
-    last_ping = time.monotonic()
+    last_ping = 0.0
     while True:
         if stop is not None and await stop():
             return
@@ -464,12 +464,14 @@ async def stream_events(
         batch = service.events.since(cursor)
         if batch.lost:
             yield _sse(None, {"type": "resync"})
+            last_ping = time.monotonic()
             cursor = service.events.cursor
             batch = service.events.since(cursor)
 
         for item in batch.events:
             cursor = int(item["seq"])
             yield _sse(cursor, item)
+            last_ping = time.monotonic()
 
         if not batch.events:
             now = time.monotonic()

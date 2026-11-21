@@ -192,6 +192,10 @@ export function useSteward() {
   }, [bootstrap])
 
   useEffect(() => {
+    if (user === null) {
+      setConnected(false)
+      return
+    }
     const source = new EventSource('/api/stream')
     source.onopen = () => setConnected(true)
     source.onerror = () => setConnected(false)
@@ -205,7 +209,7 @@ export function useSteward() {
       handleEvent(event)
     }
     return () => source.close()
-  }, [handleEvent])
+  }, [handleEvent, user])
 
   const send = useCallback(
     async (text: string): Promise<boolean> => {
